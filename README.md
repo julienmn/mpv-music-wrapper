@@ -28,12 +28,16 @@ Run from the repository root (or place the script on PATH):
 
 # Album mode
 ./mpv_music_wrapper.sh --album=/path/to/album --normalize
+# Album mode with library (enables parent cover search for multi-disc albums)
+./mpv_music_wrapper.sh --album=/home/johndoe/music/Album --library=/home/johndoe/music/ --normalize
 
 # Playlist mode
 ./mpv_music_wrapper.sh --playlist=/path/to/list.m3u8 --normalize
 ```
 
 You can omit `--normalize` to skip ReplayGain scanning (files are still copied/stripped; mpv uses `--replaygain=no`).
+
+For album mode, adding `--library=/path/to/your/music` lets the wrapper fall back to album-level cover art (folder directly under the library root) when tracks live in disc subfolders.
 
 ### Examples for shell functions / aliases
 Add to `~/.bashrc` (adjust paths as needed):
@@ -53,6 +57,7 @@ play_album /path/to/album
 - When multiple keyword matches: higher resolution wins; tie -> earlier keyword; tie -> larger file size; tie -> filename.
 - When no keywords: higher resolution; tie -> size; tie -> filename.
 - Embedded art is extracted to a temp PNG and participates in selection; if it loses, it is removed. The chosen image is converted to `cover.png` in the track’s temp dir. Embedded art is stripped from the temp audio copy so mpv only sees external `cover.png`.
+- Multi-disc albums: if you provide `--library` in album mode and the album lives inside that library, the script also searches for art in the album folder directly under the library root (in addition to the disc folder). Keyworded images in the current disc folder still win over parent-folder images.
 
 ## Playlists
 - Supported: m3u/m3u8/pls/cue. Non-audio entries are skipped with warnings. Relative paths are resolved against the playlist location.
