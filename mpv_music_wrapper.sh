@@ -61,7 +61,8 @@ Modes (choose one):
   --playlist <file>            Play entries from <file> (sorted as given).
 
 Options:
-  --library <dir>              Required for --random-mode. Not used by other modes.
+  --library <dir>              Required for --random-mode. Optional for --album to enable multi-disc
+                               parent cover search when the album is inside the library.
   --normalize                  Copy to RAM, strip existing RG tags, add track RG via metaflac,
                                and play with --replaygain=track. Without this flag we still
                                copy to RAM, strip RG tags when possible, and link album art,
@@ -131,6 +132,27 @@ find_images_recursive() {
     \) -print0 2>/dev/null
 }
 
+album_root_for_track() {
+  # For multi-disc albums stored as <library>/<album>/<disc>/<tracks>, return
+  # the album folder directly under the library root. Only applies when a
+  # library is known and the track resides inside it.
+  local track="$1" lib="${LIBRARY%/}"
+  [[ -n "$lib" && -d "$lib" ]] || return 0
+
+  case "$track" in
+  "$lib"/*) ;;
+  *) return 0 ;;
+  esac
+
+  local rel="${track#$lib/}"
+  local first="${rel%%/*}"
+  [[ -z "$first" ]] && return 0
+
+  local root="$lib/$first"
+  [[ -d "$root" ]] || return 0
+  printf '%s\n' "$root"
+}
+
 parse_args() {
   if [[ $# -eq 0 ]]; then
     usage
@@ -177,6 +199,9 @@ parse_args() {
   album)
     [[ -n "$ALBUM_DIR" ]] || die "--album requires a directory path"
     [[ -d "$ALBUM_DIR" ]] || die "Album directory not found: $ALBUM_DIR"
+    if [[ -n "$LIBRARY" ]]; then
+      [[ -d "$LIBRARY" ]] || die "Library path not found: $LIBRARY"
+    fi
     ;;
   playlist)
     [[ -n "$PLAYLIST_FILE" ]] || die "--playlist requires a file path"
@@ -382,15 +407,38 @@ select_cover_for_track() {
   local -a candidates=()
   local embedded=""
   local dir f area kw name lower kwd dims w h size src_type disp_path kw_rank
-  local best="" best_area=-1 best_kw_match=0 best_kw_rank=999 best_name="" best_src="external" best_w=0 best_h=0 best_size=-1
+  local best="" best_area=-1 best_kw_match=0 best_kw_rank=999 best_name="" best_src="external" best_w=0 best_h=0 best_size=-1 best_scope_rank=999
   local -a detail_lines=()
+  local -A seen_candidates=()
 
   COVER_SELECTED_META=""
   COVER_SELECTED_DETAIL="[ ] no images found"
   COVER_SELECTED_BEST=""
 
   dir=$(dirname "$track")
-  mapfile -d '' -t candidates < <(find_images_recursive "$dir" || true)
+  local album_root=""
+  local is_multi_disc=0
+  album_root=$(album_root_for_track "$track" 2>/dev/null || true)
+  if [[ -n "$album_root" && "$dir" != "$album_root" && "$dir" == "$album_root"* ]]; then
+    is_multi_disc=1
+  fi
+
+  local -a tmp_candidates=()
+  mapfile -d '' -t tmp_candidates < <(find_images_recursive "$dir" || true)
+  for f in "${tmp_candidates[@]}"; do
+    [[ -n "${seen_candidates[$f]:-}" ]] && continue
+    seen_candidates["$f"]=1
+    candidates+=("$f")
+  done
+
+  if ((is_multi_disc)); then
+    mapfile -d '' -t tmp_candidates < <(find_images_recursive "$album_root" || true)
+    for f in "${tmp_candidates[@]}"; do
+      [[ -n "${seen_candidates[$f]:-}" ]] && continue
+      seen_candidates["$f"]=1
+      candidates+=("$f")
+    done
+  fi
 
   embedded=$(extract_embedded_cover "$audio_copy" "$dst_dir" 2>/dev/null || true)
   if [[ -n "$embedded" ]]; then
@@ -415,20 +463,31 @@ select_cover_for_track() {
       idx=$((idx + 1))
     done
     name=$(basename "$f")
+    local scope="external" scope_rank=2
     if [[ -n "$embedded" && "$f" == "$embedded" ]]; then
       src_type="embedded"
       disp_path="(embedded from $(display_path "$track"))"
+      scope="embedded"
+      scope_rank=0
     else
       src_type="external"
       disp_path=$(display_path "$f")
+      if [[ "$f" == "$dir"* ]]; then
+        scope="disc"
+        scope_rank=0
+      elif [[ -n "$album_root" && "$f" == "$album_root"* ]]; then
+        scope="album-root"
+        scope_rank=1
+      fi
     fi
-    detail_lines+=("path=$disp_path src=$src_type res=${w}x${h} area=$area size=$size kw=$kw")
+    detail_lines+=("path=$disp_path src=$src_type scope=$scope res=${w}x${h} area=$area size=$size kw=$kw")
 
     if { ((kw == 1 && best_kw_match == 0)); } ||
-      { ((kw == 1 && best_kw_match == 1)) && ((area > best_area)); } ||
-      { ((kw == 1 && best_kw_match == 1)) && ((area == best_area)) && ((kw_rank < best_kw_rank)); } ||
-      { ((kw == 1 && best_kw_match == 1)) && ((area == best_area)) && ((kw_rank == best_kw_rank)) && ((size > best_size)); } ||
-      { ((kw == 1 && best_kw_match == 1)) && ((area == best_area)) && ((kw_rank == best_kw_rank)) && ((size == best_size)) && { [[ -z "$best_name" ]] || [[ "$name" < "$best_name" ]]; }; } ||
+      { ((kw == 1 && best_kw_match == 1)) && ((scope_rank < best_scope_rank)); } ||
+      { ((kw == 1 && best_kw_match == 1)) && ((scope_rank == best_scope_rank)) && ((area > best_area)); } ||
+      { ((kw == 1 && best_kw_match == 1)) && ((scope_rank == best_scope_rank)) && ((area == best_area)) && ((kw_rank < best_kw_rank)); } ||
+      { ((kw == 1 && best_kw_match == 1)) && ((scope_rank == best_scope_rank)) && ((area == best_area)) && ((kw_rank == best_kw_rank)) && ((size > best_size)); } ||
+      { ((kw == 1 && best_kw_match == 1)) && ((scope_rank == best_scope_rank)) && ((area == best_area)) && ((kw_rank == best_kw_rank)) && ((size == best_size)) && { [[ -z "$best_name" ]] || [[ "$name" < "$best_name" ]]; }; } ||
       { ((kw == 0 && best_kw_match == 0)) && ((area > best_area)); } ||
       { ((kw == 0 && best_kw_match == 0)) && ((area == best_area)) && ((size > best_size)); } ||
       { ((kw == 0 && best_kw_match == 0)) && ((area == best_area)) && ((size == best_size)) && { [[ -z "$best_name" ]] || [[ "$name" < "$best_name" ]]; }; }; then
@@ -441,6 +500,7 @@ select_cover_for_track() {
       best_h=$h
       best_size=$size
       best_src=$src_type
+      best_scope_rank=$scope_rank
     fi
   done
 
