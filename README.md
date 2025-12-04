@@ -43,7 +43,7 @@ For album mode, adding `--library=/path/to/your/music` lets the wrapper fall bac
 Add to `~/.bashrc` (adjust paths as needed):
 ```bash
 play_random_music(){ ./mpv_music_wrapper.sh --random-mode=full-library --library=/home/johndoe/music/ --normalize; }
-play_album(){ ./mpv_music_wrapper.sh --album="$1" --normalize; }
+play_album(){ ./mpv_music_wrapper.sh --album="$1" --library=/home/johndoe/music/ --normalize; }
 ```
 
 Then use:
