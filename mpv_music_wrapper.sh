@@ -20,6 +20,7 @@ PREFERRED_IMAGE_KEYWORDS=(cover front folder)
 IMAGE_PROBE_BIN="ffprobe"
 IMAGE_EXTRACT_BIN="ffmpeg"
 COVER_PREFERRED_FILE="cover.png"
+DISC_SCOPE_AREA_THRESHOLD_PCT=90  # Disc image can beat parent if within this % of parent area (when no keywords)
 MODE=""
 LIBRARY=""
 ALBUM_DIR=""
@@ -482,15 +483,45 @@ select_cover_for_track() {
     fi
     detail_lines+=("path=$disp_path src=$src_type scope=$scope res=${w}x${h} area=$area size=$size kw=$kw")
 
-    if { ((kw == 1 && best_kw_match == 0)); } ||
-      { ((kw == 1 && best_kw_match == 1)) && ((scope_rank < best_scope_rank)); } ||
-      { ((kw == 1 && best_kw_match == 1)) && ((scope_rank == best_scope_rank)) && ((area > best_area)); } ||
-      { ((kw == 1 && best_kw_match == 1)) && ((scope_rank == best_scope_rank)) && ((area == best_area)) && ((kw_rank < best_kw_rank)); } ||
-      { ((kw == 1 && best_kw_match == 1)) && ((scope_rank == best_scope_rank)) && ((area == best_area)) && ((kw_rank == best_kw_rank)) && ((size > best_size)); } ||
-      { ((kw == 1 && best_kw_match == 1)) && ((scope_rank == best_scope_rank)) && ((area == best_area)) && ((kw_rank == best_kw_rank)) && ((size == best_size)) && { [[ -z "$best_name" ]] || [[ "$name" < "$best_name" ]]; }; } ||
-      { ((kw == 0 && best_kw_match == 0)) && ((area > best_area)); } ||
-      { ((kw == 0 && best_kw_match == 0)) && ((area == best_area)) && ((size > best_size)); } ||
-      { ((kw == 0 && best_kw_match == 0)) && ((area == best_area)) && ((size == best_size)) && { [[ -z "$best_name" ]] || [[ "$name" < "$best_name" ]]; }; }; then
+    local pick=0
+    if ((kw == 1 && best_kw_match == 0)); then
+      pick=1
+    elif ((kw == 1 && best_kw_match == 1)); then
+      if ((scope_rank < best_scope_rank)); then
+        pick=1
+      elif ((scope_rank == best_scope_rank && area > best_area)); then
+        pick=1
+      elif ((scope_rank == best_scope_rank && area == best_area && kw_rank < best_kw_rank)); then
+        pick=1
+      elif ((scope_rank == best_scope_rank && area == best_area && kw_rank == best_kw_rank && size > best_size)); then
+        pick=1
+      elif ((scope_rank == best_scope_rank && area == best_area && kw_rank == best_kw_rank && size == best_size)) && { [[ -z "$best_name" ]] || [[ "$name" < "$best_name" ]]; }; then
+        pick=1
+      fi
+    elif ((kw == 0 && best_kw_match == 0)); then
+      local within_threshold=0
+      if ((best_area > 0)); then
+        if ((area * 100 >= best_area * DISC_SCOPE_AREA_THRESHOLD_PCT)); then
+          within_threshold=1
+        fi
+      else
+        within_threshold=1
+      fi
+
+      if ((scope_rank < best_scope_rank && within_threshold)); then
+        pick=1
+      elif ((scope_rank == best_scope_rank && area > best_area)); then
+        pick=1
+      elif ((scope_rank == best_scope_rank && area == best_area && size > best_size)); then
+        pick=1
+      elif ((scope_rank == best_scope_rank && area == best_area && size == best_size)) && { [[ -z "$best_name" ]] || [[ "$name" < "$best_name" ]]; }; then
+        pick=1
+      elif ((scope_rank > best_scope_rank && area > best_area)); then
+        pick=1
+      fi
+    fi
+
+    if ((pick)); then
       best="$f"
       best_area=$area
       best_kw_match=$kw
