@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# mpv_music_wrapper.sh
-# Modes:
-#   --random-mode=full-library --library /path/to/library [--normalize]
-#   --album /path/to/album [--normalize]
-#   --playlist /path/to/playlist.m3u [--normalize]
-# Only one mode at a time. Extra args are forwarded to mpv.
-
 PID=$$
 SOCK="/tmp/mpv-${PID}.sock"
 TMP_ROOT=""
@@ -21,6 +14,17 @@ IMAGE_PROBE_BIN="ffprobe"
 IMAGE_EXTRACT_BIN="ffmpeg"
 COVER_PREFERRED_FILE="cover.png"
 DISC_SCOPE_AREA_THRESHOLD_PCT=90  # Disc image can beat parent if within this % of parent area (when no keywords)
+ALBUM_SPREAD_THRESHOLD=50       # Album-aware random kicks in when >= this many albums
+ALBUM_HISTORY_MIN=20            # Minimum recent albums to avoid
+ALBUM_HISTORY_MAX=200           # Maximum recent albums to avoid
+ALBUM_HISTORY_PCT=10            # Target percent of albums to keep in history (avoid repeats)
+ALBUM_HISTORY_SIZE=0            # Filled by planner for random mode
+ALBUM_HISTORY=()
+LAST_RANDOM_RESCAN=0
+RANDOM_RESCAN_INTERVAL=3600     # seconds
+ALBUM_SPREAD_MODE=0
+TOTAL_ALBUM_COUNT=0
+TOTAL_TRACK_COUNT=0
 MODE=""
 LIBRARY=""
 ALBUM_DIR=""
@@ -40,6 +44,9 @@ COVER_CHOICE_DETAIL=()
 COVER_SELECTED_BEST=""
 COVER_SELECTED_META=""
 COVER_SELECTED_DETAIL=""
+ALBUMS=()
+declare -A ALBUM_TRACK_FILES=()
+declare -A ALBUM_TRACK_COUNT=()
 
 log_info() { printf '[info] %s\n' "$*"; }
 log_warn() { printf '[warn] %s\n' "$*" >&2; }
@@ -259,16 +266,177 @@ add_track() {
 }
 
 gather_random_tracks() {
-  mapfile -d '' -t TRACKS < <(
-    find "$LIBRARY" -type f -print0 |
-      while IFS= read -r -d '' f; do
-        if is_audio "$f"; then
-          printf '%s\0' "$f"
-        fi
-      done |
-      shuf -z
-  )
+  build_album_map
+  if ((ALBUM_SPREAD_MODE)); then
+    ((${#ALBUMS[@]} > 0)) || die "No albums with audio files found under $LIBRARY"
+    return
+  fi
+
+  TRACKS=()
+  local album
+  local -a tmp_tracks=()
+  for album in "${ALBUMS[@]}"; do
+    mapfile -t tmp_tracks <<<"${ALBUM_TRACK_FILES[$album]}"
+    TRACKS+=("${tmp_tracks[@]}")
+  done
+
+  mapfile -d '' -t TRACKS < <(printf '%s\0' "${TRACKS[@]}" | shuf -z)
   ((${#TRACKS[@]} > 0)) || die "No audio files found under $LIBRARY"
+}
+
+build_album_map() {
+  ALBUMS=()
+  ALBUM_TRACK_FILES=()
+  ALBUM_TRACK_COUNT=()
+  TOTAL_TRACK_COUNT=0
+
+  mapfile -d '' -t local_albums < <(find "$LIBRARY" -mindepth 1 -maxdepth 1 -type d -print0)
+  local album
+  for album in "${local_albums[@]}"; do
+    mapfile -d '' -t tracks < <(
+      find "$album" -type f -print0 |
+        while IFS= read -r -d '' f; do
+          if is_audio "$f"; then
+            printf '%s\0' "$f"
+          fi
+        done
+    )
+    ((${#tracks[@]})) || continue
+    ALBUMS+=("$album")
+    ALBUM_TRACK_COUNT["$album"]=${#tracks[@]}
+    ALBUM_TRACK_FILES["$album"]=$(printf '%s\n' "${tracks[@]}")
+    TOTAL_TRACK_COUNT=$((TOTAL_TRACK_COUNT + ${#tracks[@]}))
+  done
+
+  TOTAL_ALBUM_COUNT=${#ALBUMS[@]}
+  ALBUM_SPREAD_MODE=0
+  if ((TOTAL_ALBUM_COUNT >= ALBUM_SPREAD_THRESHOLD)); then
+    ALBUM_SPREAD_MODE=1
+    ALBUM_HISTORY_SIZE=$((TOTAL_ALBUM_COUNT * ALBUM_HISTORY_PCT / 100))
+    ((ALBUM_HISTORY_SIZE < ALBUM_HISTORY_MIN)) && ALBUM_HISTORY_SIZE=$ALBUM_HISTORY_MIN
+    ((ALBUM_HISTORY_SIZE > ALBUM_HISTORY_MAX)) && ALBUM_HISTORY_SIZE=$ALBUM_HISTORY_MAX
+    ((ALBUM_HISTORY_SIZE >= TOTAL_ALBUM_COUNT)) && ALBUM_HISTORY_SIZE=$((TOTAL_ALBUM_COUNT - 1))
+  fi
+  LAST_RANDOM_RESCAN=$(date +%s)
+}
+
+prune_album_history() {
+  # Drop history entries that no longer exist after a rescan
+  local -a pruned=()
+  local h
+  for h in "${ALBUM_HISTORY[@]}"; do
+    [[ -n "${ALBUM_TRACK_COUNT[$h]+x}" ]] && pruned+=("$h")
+  done
+  ALBUM_HISTORY=("${pruned[@]}")
+}
+
+album_history_contains() {
+  local album="$1" limit="$2"
+  local count=${#ALBUM_HISTORY[@]}
+  ((count == 0)) && return 1
+  local start=0
+  if ((count > limit)); then
+    start=$((count - limit))
+  fi
+  local i
+  for ((i = count - 1; i >= start; i--)); do
+    if [[ "${ALBUM_HISTORY[$i]}" == "$album" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+push_album_history() {
+  local album="$1"
+  ALBUM_HISTORY+=("$album")
+  local max_size=$ALBUM_HISTORY_SIZE
+  ((max_size > TOTAL_ALBUM_COUNT - 1)) && max_size=$((TOTAL_ALBUM_COUNT - 1))
+  while ((${#ALBUM_HISTORY[@]} > max_size)); do
+    ALBUM_HISTORY=("${ALBUM_HISTORY[@]:1}")
+  done
+}
+
+pick_random_from_array() {
+  local -n arr="$1"
+  ((${#arr[@]} > 0)) || return 1
+  local choice
+  choice=$(printf '%s\0' "${arr[@]}" | shuf -z -n1 | tr -d '\0')
+  [[ -n "$choice" ]] || return 1
+  printf '%s\n' "$choice"
+}
+
+choose_album_for_play() {
+  local album_count=${#ALBUMS[@]}
+  ((album_count > 0)) || return 1
+  local hist_cap=$ALBUM_HISTORY_SIZE
+  ((hist_cap > album_count - 1)) && hist_cap=$((album_count - 1))
+
+  local -a candidates=()
+  local a
+  for a in "${ALBUMS[@]}"; do
+    if ! album_history_contains "$a" "$hist_cap"; then
+      candidates+=("$a")
+    fi
+  done
+  if ((${#candidates[@]} == 0)); then
+    candidates=("${ALBUMS[@]}")
+  fi
+  pick_random_from_array candidates
+}
+
+choose_track_in_album() {
+  local album="$1"
+  local tracks_str="${ALBUM_TRACK_FILES[$album]-}"
+  [[ -n "$tracks_str" ]] || return 1
+  mapfile -t local_tracks <<<"$tracks_str"
+  pick_random_from_array local_tracks
+}
+
+maybe_refresh_album_map() {
+  local now
+  now=$(date +%s)
+  if ((now - LAST_RANDOM_RESCAN < RANDOM_RESCAN_INTERVAL)); then
+    return
+  fi
+
+  local old_track_count=$TOTAL_TRACK_COUNT
+  local -a old_albums=("${ALBUMS[@]}")
+  declare -A old_set=()
+  local a
+  for a in "${old_albums[@]}"; do
+    old_set["$a"]=1
+  done
+
+  build_album_map
+  prune_album_history
+
+  local added=0 removed=0
+  for a in "${ALBUMS[@]}"; do
+    [[ -n "${old_set[$a]:-}" ]] || ((added++))
+  done
+  for a in "${old_albums[@]}"; do
+    [[ -n "${ALBUM_TRACK_COUNT[$a]+x}" ]] || ((removed++))
+  done
+
+  local delta=$((TOTAL_TRACK_COUNT - old_track_count))
+  if ((added > 0 || removed > 0 || delta != 0)); then
+    log_info "random rescan: albums=$TOTAL_ALBUM_COUNT (added ${added}, removed ${removed}) tracks=$TOTAL_TRACK_COUNT (delta $delta)"
+  fi
+}
+
+next_album_spread_track() {
+  maybe_refresh_album_map
+  ((ALBUM_SPREAD_MODE)) || return 1
+  (( ${#ALBUMS[@]} > 0 )) || return 1
+
+  local album
+  album=$(choose_album_for_play) || return 1
+  local track
+  track=$(choose_track_in_album "$album") || return 1
+
+  push_album_history "$album"
+  printf '%s\n' "$track"
 }
 
 gather_album_tracks() {
@@ -484,6 +652,17 @@ select_cover_for_track() {
     detail_lines+=("path=$disp_path src=$src_type scope=$scope res=${w}x${h} area=$area size=$size kw=$kw")
 
     local pick=0
+    local allow_worse_scope_override=0
+    if ((scope_rank > best_scope_rank)); then
+      if ((best_area > 0)); then
+        if ((best_area * 100 < area * DISC_SCOPE_AREA_THRESHOLD_PCT)); then
+          allow_worse_scope_override=1
+        fi
+      else
+        allow_worse_scope_override=1
+      fi
+    fi
+
     if ((kw == 1 && best_kw_match == 0)); then
       pick=1
     elif ((kw == 1 && best_kw_match == 1)); then
@@ -496,6 +675,8 @@ select_cover_for_track() {
       elif ((scope_rank == best_scope_rank && area == best_area && kw_rank == best_kw_rank && size > best_size)); then
         pick=1
       elif ((scope_rank == best_scope_rank && area == best_area && kw_rank == best_kw_rank && size == best_size)) && { [[ -z "$best_name" ]] || [[ "$name" < "$best_name" ]]; }; then
+        pick=1
+      elif ((scope_rank > best_scope_rank && allow_worse_scope_override && area > best_area)); then
         pick=1
       fi
     elif ((kw == 0 && best_kw_match == 0)); then
@@ -516,7 +697,7 @@ select_cover_for_track() {
         pick=1
       elif ((scope_rank == best_scope_rank && area == best_area && size == best_size)) && { [[ -z "$best_name" ]] || [[ "$name" < "$best_name" ]]; }; then
         pick=1
-      elif ((scope_rank > best_scope_rank && area > best_area)); then
+      elif ((scope_rank > best_scope_rank && allow_worse_scope_override && area > best_area)); then
         pick=1
       fi
     fi
@@ -855,12 +1036,29 @@ queue_more() {
   local -n pos="$current_pos_ref"
   local -n high="$highest_appended_ref"
   local -n next="$next_to_prepare_ref"
+  local appended=0
 
   local target=$((pos + BUFFER_AHEAD))
-  while ((high < target && next < total)); do
-    local prepared
+  while ((high < target)); do
+    local src prepared
+
+    if ((ALBUM_SPREAD_MODE)); then
+      if ((next >= ${#TRACKS[@]})); then
+        src=$(next_album_spread_track || true)
+        if [[ -z "$src" ]]; then
+          break
+        fi
+        TRACKS+=("$src")
+      else
+        src="${TRACKS[$next]}"
+      fi
+    else
+      ((next < total)) || break
+      src="${TRACKS[$next]}"
+    fi
+
     PREPARED_PATH=""
-    prepare_track "$next" "${TRACKS[$next]}"
+    prepare_track "$next" "$src"
     prepared="$PREPARED_PATH"
     if ((high < 0)); then
       append_to_mpv "$prepared" "replace"
@@ -869,7 +1067,10 @@ queue_more() {
     fi
     high=$next
     next=$((next + 1))
+    appended=1
   done
+
+  return $((appended == 0))
 }
 
 clean_finished() {
@@ -879,6 +1080,10 @@ clean_finished() {
   if ((upto - 1 > last)); then
     for ((i = last + 1; i < upto; i++)); do
       rm -rf -- "$TMP_ROOT/$i"
+      unset TRACKS[$i]
+      unset COVER_CHOICE_PATHS[$i]
+      unset COVER_CHOICE_META[$i]
+      unset COVER_CHOICE_DETAIL[$i]
     done
     last=$((upto - 1))
   fi
@@ -902,13 +1107,34 @@ main() {
   esac
 
   local total=${#TRACKS[@]}
+  if ((ALBUM_SPREAD_MODE)); then
+    total=$TOTAL_TRACK_COUNT
+  fi
 
   # Fancy header around startup info (colored)
   local mode_line="" path_line=""
+  local random_album_line="" random_desc_line="" rescan_pretty=""
+  if ((RANDOM_RESCAN_INTERVAL > 0)); then
+    local _m _h
+    _m=$((RANDOM_RESCAN_INTERVAL / 60))
+    _h=$((_m / 60))
+    _m=$((_m % 60))
+    if ((_h > 0)); then
+      rescan_pretty=$(printf "%dh%02dm" "$_h" "$_m")
+    else
+      rescan_pretty=$(printf "%dm" "$_m")
+    fi
+  fi
   case "$MODE" in
     random)
       mode_line="Mode: random"
       path_line="Library: $LIBRARY"
+      random_album_line="Albums: $TOTAL_ALBUM_COUNT"
+      if ((ALBUM_SPREAD_MODE)); then
+        random_desc_line=$(printf 'Random: I rotate albums, skip the last %d of %d, and look for new music every %s.' "$ALBUM_HISTORY_SIZE" "$TOTAL_ALBUM_COUNT" "${rescan_pretty:-off}")
+      else
+        random_desc_line=$(printf 'Random: single big shuffle (library has < %d albums).' "$ALBUM_SPREAD_THRESHOLD")
+      fi
       ;;
     album)
       mode_line="Mode: album"
@@ -929,6 +1155,10 @@ main() {
   header_lines+=("$mode_line")
   if [[ -n "$path_line" ]]; then
     header_lines+=("$path_line")
+  fi
+  if [[ "$MODE" == "random" ]]; then
+    [[ -n "$random_album_line" ]] && header_lines+=("$random_album_line")
+    [[ -n "$random_desc_line" ]] && header_lines+=("$random_desc_line")
   fi
   header_lines+=("Socket: $SOCK")
   header_lines+=("Tracks: $total")
@@ -980,11 +1210,19 @@ main() {
     local pos
     pos=$(get_playlist_pos)
     if [[ -z "$pos" || "$pos" == "null" ]]; then
-      if ((next_to_prepare >= total)); then
-        break
+      if ((ALBUM_SPREAD_MODE)); then
+        if queue_more "$total" current_pos highest_appended next_to_prepare; then
+          continue
+        else
+          break
+        fi
       else
-        queue_more "$total" current_pos highest_appended next_to_prepare
-        continue
+        if ((next_to_prepare >= total)); then
+          break
+        else
+          queue_more "$total" current_pos highest_appended next_to_prepare
+          continue
+        fi
       fi
     fi
 
@@ -997,7 +1235,11 @@ main() {
     clean_finished "$p" last_cleaned
     current_pos=$p
     print_rg_for_pos "$p"
-    queue_more "$total" current_pos highest_appended next_to_prepare
+    if ((ALBUM_SPREAD_MODE)); then
+      queue_more "$total" current_pos highest_appended next_to_prepare || break
+    else
+      queue_more "$total" current_pos highest_appended next_to_prepare
+    fi
   fi
   done
 

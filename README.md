@@ -53,11 +53,18 @@ play_album /path/to/album
 ```
 
 ## Cover selection details
-- Preferred keywords: `cover`, `front`, `folder` (beats resolution/area). You can adjust the keyword list in `PREFERRED_IMAGE_KEYWORDS` in the script to match your own naming.
-- When multiple keyword matches: higher resolution wins; tie -> earlier keyword; tie -> larger file size; tie -> filename.
-- When no keywords: higher resolution; tie -> size; tie -> filename.
-- Embedded art is extracted to a temp PNG and participates in selection; if it loses, it is removed. The chosen image is converted to `cover.png` in the track’s temp dir. Embedded art is stripped from the temp audio copy so mpv only sees external `cover.png`.
-- Multi-disc albums: if you provide `--library` in album mode and the album lives inside that library, the script also searches for art in the album folder directly under the library root (in addition to the disc folder). Keyworded images in the current disc folder still win over parent-folder images.
+- It gathers images from the track’s folder (and subfolders) plus embedded art; with `--library` in multi-disc layouts it also checks the album’s top folder.
+- Keyworded filenames (`cover`, `front`, `folder` by default; tweak `PREFERRED_IMAGE_KEYWORDS`) beat non-keyworded images.
+- Between images in the same keyword class, scope matters: disc/embedded beats album-root, which beats other externals—unless the “better” scope is much smaller. By default, a disc image wins unless it is under ~90% of the area of the competing image.
+- If scope ties, higher resolution wins; ties fall back to keyword order, then file size, then filename.
+- Embedded art is extracted and compared like any other image; if it loses, it’s removed from the temp audio copy. The winner is exposed as `cover.png` in the temp dir. Keyworded disc-folder images still beat parent images.
+
+## Random algorithm
+- Current random mode is `full-library`. Libraries with <50 albums shuffle all tracks once (uniform, no replacement).
+- Libraries with ≥50 albums use album-spread: build an album → tracks map, pick a random album not seen in the recent history window, then a random track from that album. The history size is ~10% of album count, clamped to 20–200 and never reaching the full album count.
+- Recently played albums are avoided until they age out of the history window; playback continues indefinitely with albums rotating back in after they fall out of history.
+- The library is fully rescanned every hour and the album/track pool is rebuilt (recent-album history is kept, entries for deleted albums are dropped). Newly added albums can start playing without restarting the script.
+- Tunables live near the top of `mpv_music_wrapper.sh` (e.g., album thresholds, history percent/min/max, rescan interval).
 
 ## Playlists
 - Supported: m3u/m3u8/pls/cue. Non-audio entries are skipped with warnings. Relative paths are resolved against the playlist location.
