@@ -56,7 +56,7 @@ play_album /path/to/album
 - Where it searches:
   - Track folder and its subfolders.
   - Embedded art (extracted to PNG).
-  - With `--library` in album mode for multi-disc layouts: also the album’s top folder.
+  - With `--library` in album or random mode for multi-disc layouts: also the album’s top folder.
 - Tokens and keywords:
   - Preferred keywords: `cover`, `front`, `folder` (change via `PREFERRED_IMAGE_KEYWORDS`).
   - Non-front words: `back`, `tray`, `cd`, `disc`, `inlay`, `inlet`, `booklet`, `book`, `spine`, `rear`, `inside`, `tracklisting`.
