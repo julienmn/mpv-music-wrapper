@@ -127,6 +127,29 @@ visible_len() {
   echo "${#s}"
 }
 
+normalize_name_tokens() {
+  local s="$1"
+  s=${s,,}
+  s=$(tr -cs '[:alnum:]' ' ' <<<"$s")
+  read -r -a toks <<<"$s"
+  printf '%s\n' "${toks[@]}"
+}
+
+token_overlap_score() {
+  local -n base_toks="$1"
+  local -n target_toks="$2"
+  local -A target_set=()
+  local t
+  for t in "${target_toks[@]}"; do
+    target_set["$t"]=1
+  done
+  local score=0
+  for t in "${base_toks[@]}"; do
+    [[ -n "$t" && -n "${target_set[$t]:-}" ]] && ((score++))
+  done
+  echo "$score"
+}
+
 human_rescan_interval() {
   ((RANDOM_RESCAN_INTERVAL > 0)) || {
     echo "off"
@@ -764,6 +787,10 @@ select_cover_for_track() {
     is_multi_disc=1
   fi
 
+  local album_token="${album_root##*/}"
+  local -a album_tokens=()
+  mapfile -t album_tokens <<<"$(normalize_name_tokens "$album_token")"
+
   gather_image_candidates "$dir" "$album_root" "$is_multi_disc" "$audio_copy" "$dst_dir" candidates embedded
 
   for f in "${candidates[@]}"; do
@@ -773,6 +800,7 @@ select_cover_for_track() {
     kw=0
     kw_rank=999
     local kw_count=0
+    local name_token_score=0
     lower=$(basename "$f")
     lower=${lower,,}
     local idx=0
@@ -786,6 +814,15 @@ select_cover_for_track() {
       fi
       idx=$((idx + 1))
     done
+    if ((kw_count == 0 && ${#album_tokens[@]} > 0)); then
+      local base_noext="${lower%.*}"
+      local -a base_tokens=()
+      mapfile -t base_tokens <<<"$(normalize_name_tokens "$base_noext")"
+      name_token_score=$(token_overlap_score base_tokens album_tokens)
+      if ((name_token_score > 0)); then
+        kw_count=$((kw_count + name_token_score))
+      fi
+    fi
     name=$(basename "$f")
     local scope="external" scope_rank=2
     if [[ -n "$embedded" && "$f" == "$embedded" ]]; then
