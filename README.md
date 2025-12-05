@@ -53,11 +53,25 @@ play_album /path/to/album
 ```
 
 ## Cover selection details
-- It gathers images from the track’s folder (and subfolders) plus embedded art; with `--library` in multi-disc layouts it also checks the album’s top folder.
-- Front-ish images win first: preferred keywords (`cover`, `front`, `folder` by default; tweak `PREFERRED_IMAGE_KEYWORDS`) or filenames that share album-name words without “non-front” terms (`back`, `tray`, `cd`, `disc`, `inlay`, `inlet`, `booklet`, `book`, `spine`, `rear`, `inside`). Album-name matching ignores junk tokens (pure numbers, very short tokens, audio extensions).
-- Next come album-named files that do contain one of those “non-front” terms.
-- Everything else is last. Within a bucket, scope matters (disc/embedded > album-root > other, with an area override threshold), then resolution/size, then name-based tie-breakers. Album-name token count breaks ties inside the album-named bucket, and a much higher-resolution album-named image (with no non-front terms) can beat a small keyworded image when within the area threshold (`AREA_THRESHOLD_PCT`, default 75%).
-- Embedded art is extracted and compared like any other image; if it loses, it’s removed from the temp audio copy. The winner is exposed as `cover.png` in the temp dir. Keyworded disc-folder images still beat parent images.
+- Where it searches:
+  - Track folder and its subfolders.
+  - Embedded art (extracted to PNG).
+  - With `--library` in album mode for multi-disc layouts: also the album’s top folder.
+- Tokens and keywords:
+  - Preferred keywords: `cover`, `front`, `folder` (change via `PREFERRED_IMAGE_KEYWORDS`).
+  - Non-front words: `back`, `tray`, `cd`, `disc`, `inlay`, `inlet`, `booklet`, `book`, `spine`, `rear`, `inside`, `tracklisting`.
+  - Album-name tokens: album folder name is normalized (lowercase, punctuation stripped) and drops audio extensions, pure numbers, and very short tokens. Image basenames are normalized the same way; shared tokens give an album-name score.
+- Buckets (priority order):
+  1) Front-ish: has a preferred keyword, or has album-name tokens with no non-front words.
+  2) Album-named with non-front words.
+  3) Everything else.
+- Picking inside a bucket:
+  - Scope: disc/embedded > album-root > other, with an area override (`AREA_THRESHOLD_PCT`, default 75%).
+  - Then resolution/area, then keyword index, then file size, then filename. Album-name token count breaks ties inside album-named buckets.
+- Overrides:
+  - A high-res album-named image (no non-front words) can beat a much smaller keyworded image if its area is within `AREA_THRESHOLD_PCT`.
+  - Between keyworded images of similar size, one with non-front words loses to one without them (uses the same area threshold).
+- Embedded art: extracted and compared like externals; if it loses, it’s removed. The winner is exposed as `cover.png` in the track’s temp dir, and embedded art is stripped from the temp audio copy so mpv only sees `cover.png`.
 
 ## Random algorithm
 - Current random mode is `full-library`. Libraries with <50 albums shuffle all tracks once (uniform, no replacement).
@@ -65,18 +79,6 @@ play_album /path/to/album
 - Recently played albums are avoided until they age out of the history window; playback continues indefinitely with albums rotating back in after they fall out of history.
 - The library is fully rescanned every hour and the album/track pool is rebuilt (recent-album history is kept, entries for deleted albums are dropped). Newly added albums can start playing without restarting the script.
 - Tunables live near the top of `mpv_music_wrapper.sh` (e.g., album thresholds, history percent/min/max, rescan interval).
-- Where it searches: track folder and subfolders, embedded art, and (with `--library` for multi-disc layouts) the album’s top folder.
-- Names and tokens:
-  - Preferred keywords: `cover`, `front`, `folder` (configurable via `PREFERRED_IMAGE_KEYWORDS`).
-  - Non-front words: `back`, `tray`, `cd`, `disc`, `inlay`, `inlet`, `booklet`, `book`, `spine`, `rear`, `inside`.
-  - Album-name tokens: album folder name is normalized (lowercase, punctuation stripped) and drops audio extensions, pure numbers, and very short tokens. Image basenames are normalized the same way; shared tokens give an album-name score.
-- Buckets (priority): (1) front-ish: keyword present, or album-name tokens with no non-front words; (2) album-named with non-front words; (3) everything else.
-- Picking within a bucket: scope (disc/embedded > album-root > other, with `AREA_THRESHOLD_PCT` override, default 75%), then resolution, then keyword index, then file size, then filename. Album-name token count breaks ties inside album-named buckets.
-- Overrides:
-  - A high-res album-named image (no non-front words) can beat a much smaller keyworded image if its area is within `AREA_THRESHOLD_PCT`.
-  - Between keyworded images of similar size, one with non-front words loses to one without them (uses the same area threshold).
-- Embedded art: extracted and compared like externals; if it loses, it’s removed. The winner is exposed as `cover.png` in the track’s temp dir, and embedded art is stripped from the temp audio copy so mpv only sees `cover.png`.
-
 ## Playlists
 - Supported: m3u/m3u8/pls/cue. Non-audio entries are skipped with warnings. Relative paths are resolved against the playlist location.
 
