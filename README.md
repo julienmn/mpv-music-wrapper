@@ -83,7 +83,7 @@ play_album /path/to/album
 - Supported: m3u/m3u8/pls/cue. Non-audio entries are skipped with warnings. Relative paths are resolved against the playlist location.
 
 ## Behavior and safety
-- Library is read-only; all processing occurs on temp copies in `/dev/shm/mpv-music-<pid>-XXXXXX`.
+- Library is read-only; all processing occurs on temp copies in RAM (`/dev/shm/mpv-music-<pid>-XXXXXX`).
 - Per-track temps are cleaned as playback advances; everything is cleaned on exit.
 - IPC socket: `/tmp/mpv-<pid>.sock`.
 - Poll interval: 5 seconds.
