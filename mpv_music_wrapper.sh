@@ -10,10 +10,11 @@ AUDIO_EXTS=(flac mp3 ogg opus m4a alac wav aiff wv)
 PLAYLIST_EXTS=(m3u m3u8 pls cue)
 IMAGE_EXTS=(jpg jpeg png webp gif bmp tiff tif svg)
 PREFERRED_IMAGE_KEYWORDS=(cover front folder)
+NON_FRONT_IMAGE_KEYWORDS=(back tray cd disc inlay inlet booklet book spine rear inside tracklisting)
 IMAGE_PROBE_BIN="ffprobe"
 IMAGE_EXTRACT_BIN="ffmpeg"
 COVER_PREFERRED_FILE="cover.png"
-DISC_SCOPE_AREA_THRESHOLD_PCT=90 # Disc image can beat parent if within this % of parent area (when no keywords)
+AREA_THRESHOLD_PCT=75            # Lower-scope image can beat higher-scope/keyword if within this % of area (or vice versa)
 ALBUM_SPREAD_THRESHOLD=50        # Album-aware random kicks in when >= this many albums
 ALBUM_HISTORY_MIN=20             # Minimum recent albums to avoid
 ALBUM_HISTORY_MAX=200            # Maximum recent albums to avoid
@@ -133,6 +134,31 @@ normalize_name_tokens() {
   s=$(tr -cs '[:alnum:]' ' ' <<<"$s")
   read -r -a toks <<<"$s"
   printf '%s\n' "${toks[@]}"
+}
+
+clean_album_tokens() {
+  local -a toks=()
+  mapfile -t toks <<<"$(normalize_name_tokens "$1")"
+  local -a cleaned=()
+  local t
+  for t in "${toks[@]}"; do
+    [[ -z "$t" ]] && continue
+    if [[ "$t" =~ ^[0-9]+$ ]]; then
+      # Drop pure numbers
+      continue
+    fi
+    if (( ${#t} <= 2 )); then
+      continue
+    fi
+    local ext
+    for ext in "${AUDIO_EXTS[@]}"; do
+      if [[ "$t" == "$ext" ]]; then
+        continue 2
+      fi
+    done
+    cleaned+=("$t")
+  done
+  printf '%s\n' "${cleaned[@]}"
 }
 
 token_overlap_score() {
@@ -773,6 +799,7 @@ select_cover_for_track() {
   local embedded=""
   local dir f area kw name lower kwd dims w h size src_type disp_path kw_rank
   local best="" best_area=-1 best_kw_count=0 best_kw_rank=999 best_name="" best_src="external" best_w=0 best_h=0 best_size=-1 best_scope_rank=999
+  local best_pref_kw_count=0 best_name_token_score=0 best_bucket=3
   local -a detail_lines=()
 
   COVER_SELECTED_META=""
@@ -789,7 +816,13 @@ select_cover_for_track() {
 
   local album_token="${album_root##*/}"
   local -a album_tokens=()
-  mapfile -t album_tokens <<<"$(normalize_name_tokens "$album_token")"
+  mapfile -t album_tokens <<<"$(clean_album_tokens "$album_token")"
+  local base_root=""
+  if [[ -n "$album_root" ]]; then
+    base_root="${album_root%/}"
+  else
+    base_root="${dir%/}"
+  fi
 
   gather_image_candidates "$dir" "$album_root" "$is_multi_disc" "$audio_copy" "$dst_dir" candidates embedded
 
@@ -800,13 +833,20 @@ select_cover_for_track() {
     kw=0
     kw_rank=999
     local kw_count=0
+    local pref_kw_count=0
     local name_token_score=0
+    local bucket=3
+    local has_non_front=0
     lower=$(basename "$f")
     lower=${lower,,}
+    local base_noext="${lower%.*}"
+    local -a base_tokens=()
+    mapfile -t base_tokens <<<"$(normalize_name_tokens "$base_noext")"
     local idx=0
     for kwd in "${PREFERRED_IMAGE_KEYWORDS[@]}"; do
       if [[ "$lower" == *"$kwd"* ]]; then
         kw=1
+        pref_kw_count=$((pref_kw_count + 1))
         kw_count=$((kw_count + 1))
         if ((kw_rank == 999)); then
           kw_rank=$idx
@@ -814,14 +854,29 @@ select_cover_for_track() {
       fi
       idx=$((idx + 1))
     done
-    if ((kw_count == 0 && ${#album_tokens[@]} > 0)); then
-      local base_noext="${lower%.*}"
-      local -a base_tokens=()
-      mapfile -t base_tokens <<<"$(normalize_name_tokens "$base_noext")"
+    local nfkw
+    for nfkw in "${NON_FRONT_IMAGE_KEYWORDS[@]}"; do
+      local tok
+      for tok in "${base_tokens[@]}"; do
+        if [[ "$tok" == "$nfkw" ]]; then
+          has_non_front=1
+          break 2
+        fi
+      done
+    done
+
+    if ((pref_kw_count == 0 && ${#album_tokens[@]} > 0)); then
       name_token_score=$(token_overlap_score base_tokens album_tokens)
       if ((name_token_score > 0)); then
         kw_count=$((kw_count + name_token_score))
       fi
+    fi
+    if ((pref_kw_count > 0 || (name_token_score > 0 && has_non_front == 0))); then
+      bucket=1
+    elif ((name_token_score > 0)); then
+      bucket=2
+    else
+      bucket=3
     fi
     name=$(basename "$f")
     local scope="external" scope_rank=2
@@ -841,13 +896,27 @@ select_cover_for_track() {
         scope_rank=1
       fi
     fi
-    detail_lines+=("path=$disp_path src=$src_type scope=$scope res=${w}x${h} area=$area size=$size kwcount=$kw_count")
+    local rel_path="$disp_path"
+    if [[ "$src_type" == "external" && -n "$base_root" ]]; then
+      local prefix="${f:0:${#base_root}+1}"
+      if [[ "$prefix" == "$base_root/" ]]; then
+        rel_path="${f:${#base_root}+1}"
+      fi
+      rel_path="../$rel_path"
+    elif [[ "$src_type" == "embedded" ]]; then
+      rel_path="EMBEDDED"
+    fi
+    local area_mp
+    area_mp=$(awk -v a="$area" 'BEGIN{printf "%.1fMP", a/1000000}')
+    local size_mb
+    size_mb=$(awk -v s="$size" 'BEGIN{printf "%.1fMB", s/1000000}')
+    detail_lines+=("path=$rel_path res=${w}x${h} area=$area_mp size=$size_mb kwpref=$pref_kw_count nametoks=$name_token_score bucket=$bucket score=$kw_count")
 
     local pick=0
     local allow_worse_scope_override=0
     if ((scope_rank > best_scope_rank)); then
       if ((best_area > 0)); then
-        if ((best_area * 100 < area * DISC_SCOPE_AREA_THRESHOLD_PCT)); then
+        if ((best_area * 100 < area * AREA_THRESHOLD_PCT)); then
           allow_worse_scope_override=1
         fi
       else
@@ -855,9 +924,62 @@ select_cover_for_track() {
       fi
     fi
 
-    if ((kw_count > best_kw_count)); then
+    if ((bucket < best_bucket)); then
       pick=1
-    elif ((kw_count == best_kw_count && kw_count > 0)); then
+    elif ((bucket == best_bucket && bucket == 1)); then
+      if ((pref_kw_count > best_pref_kw_count)); then
+        pick=1
+      elif ((pref_kw_count == best_pref_kw_count)); then
+        if ((pref_kw_count == 0 && has_non_front == 0 && name_token_score > best_name_token_score && area * 100 >= best_area * AREA_THRESHOLD_PCT)); then
+          pick=1
+        elif ((pref_kw_count == 0 && has_non_front == 0 && name_token_score == best_name_token_score && area * 100 >= best_area * AREA_THRESHOLD_PCT && scope_rank <= best_scope_rank)); then
+          pick=1
+        elif ((pref_kw_count > 0 && has_non_front == 0 && best_pref_kw_count > 0 && allow_worse_scope_override == 0 && area * 100 >= best_area * AREA_THRESHOLD_PCT && best_kw_rank <= kw_rank && best_area > 0)); then
+          # Both keyworded: prefer the one without non-front terms when sizes are close
+          pick=1
+        elif ((scope_rank < best_scope_rank)); then
+          pick=1
+        elif ((scope_rank == best_scope_rank && area > best_area)); then
+          pick=1
+        elif ((scope_rank == best_scope_rank && area == best_area && kw_rank < best_kw_rank)); then
+          pick=1
+        elif ((scope_rank == best_scope_rank && area == best_area && kw_rank == best_kw_rank && size > best_size)); then
+          pick=1
+        elif ((scope_rank == best_scope_rank && area == best_area && kw_rank == best_kw_rank && size == best_size)) && { [[ -z "$best_name" ]] || [[ "$name" < "$best_name" ]]; }; then
+          pick=1
+        elif ((scope_rank > best_scope_rank && allow_worse_scope_override && area > best_area)); then
+          pick=1
+        fi
+      elif ((pref_kw_count == 0 && has_non_front == 0 && best_pref_kw_count > 0 && name_token_score > 0 && area * 100 >= best_area * AREA_THRESHOLD_PCT)); then
+        # No keywords but strong album-name and much larger than keyworded best
+        pick=1
+      fi
+    elif ((bucket == best_bucket && bucket == 2)); then
+      if ((name_token_score > best_name_token_score)); then
+        pick=1
+      elif ((name_token_score == best_name_token_score)); then
+        local within_threshold=0
+        if ((best_area > 0)); then
+          if ((area * 100 >= best_area * AREA_THRESHOLD_PCT)); then
+            within_threshold=1
+          fi
+        else
+          within_threshold=1
+        fi
+
+        if ((scope_rank < best_scope_rank && within_threshold)); then
+          pick=1
+        elif ((scope_rank == best_scope_rank && area > best_area)); then
+          pick=1
+        elif ((scope_rank == best_scope_rank && area == best_area && size > best_size)); then
+          pick=1
+        elif ((scope_rank == best_scope_rank && area == best_area && size == best_size)) && { [[ -z "$best_name" ]] || [[ "$name" < "$best_name" ]]; }; then
+          pick=1
+        elif ((scope_rank > best_scope_rank && allow_worse_scope_override && area > best_area)); then
+          pick=1
+        fi
+      fi
+    elif ((bucket == best_bucket && bucket == 3)); then
       if ((scope_rank < best_scope_rank)); then
         pick=1
       elif ((scope_rank == best_scope_rank && area > best_area)); then
@@ -874,7 +996,7 @@ select_cover_for_track() {
     elif ((kw_count == 0 && best_kw_count == 0)); then
       local within_threshold=0
       if ((best_area > 0)); then
-        if ((area * 100 >= best_area * DISC_SCOPE_AREA_THRESHOLD_PCT)); then
+        if ((area * 100 >= best_area * AREA_THRESHOLD_PCT)); then
           within_threshold=1
         fi
       else
@@ -899,12 +1021,15 @@ select_cover_for_track() {
       best_area=$area
       best_kw_count=$kw_count
       best_kw_rank=$kw_rank
+      best_pref_kw_count=$pref_kw_count
+      best_name_token_score=$name_token_score
       best_name="$name"
       best_w=$w
       best_h=$h
       best_size=$size
       best_src=$src_type
       best_scope_rank=$scope_rank
+      best_bucket=$bucket
     fi
   done
 
@@ -914,9 +1039,22 @@ select_cover_for_track() {
 
   if [[ -n "$best" ]]; then
     COVER_SELECTED_META="${best_src}|${best_w}|${best_h}|${best_area}|${best_kw_count}|${best_size}"
+    local best_rel=""
+    if [[ "$best_src" == "external" && -n "$base_root" ]]; then
+      local best_prefix="${best:0:${#base_root}+1}"
+      if [[ "$best_prefix" == "$base_root/" ]]; then
+        best_rel="../${best:${#base_root}+1}"
+      else
+        best_rel="../$(display_path "$best")"
+      fi
+    fi
+    if [[ "$best_src" == "embedded" ]]; then
+      best_rel="EMBEDDED"
+    fi
+    [[ -z "$best_rel" && -n "$best" ]] && best_rel="$(display_path "$best")"
     local formatted=()
     for line in "${detail_lines[@]}"; do
-      if [[ "$line" == path="$(display_path "$best")"* && "$best_src" == "external" ]]; then
+      if [[ -n "$best_rel" && "$line" == path="$best_rel"* ]]; then
         formatted+=("[*] $line")
       elif [[ "$best_src" == "embedded" && "$line" == *"(embedded from $(display_path "$track"))"* ]]; then
         formatted+=("[*] $line")
