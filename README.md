@@ -8,7 +8,7 @@ CLI music player (mpv wrapper) that plays directly from your library with option
 - Modes: random (`--random-mode=full-library --library=...`), album (`--album=DIR`), playlist (`--playlist=FILE`).
 - Optional normalization (`--normalize`): copy audio to tmpfs, strip existing ReplayGain tags, add track ReplayGain via metaflac (FLAC only), and start mpv with `--replaygain=track`. This is done on the fly—no advance library scan or maintaining a second ReplayGain’d library. Without it: still copies/strips ReplayGain tags when possible, but no ReplayGain scan and mpv uses `--replaygain=no`.
 - RAM staging: per-track subdirs under `/dev/shm/mpv-music-<pid>-XXXXXX`; cleaned as playback advances and on exit. Library is never modified and no disk writes are done during playback.
-- Cover art: scans every image in the track folder and all subfolders, extracts embedded art to PNG, selects the best image (keywords > resolution > size > name), converts to `cover.png`, strips embedded art from the temp audio copy, and exposes only `cover.png` to mpv (`--cover-art-auto=exact`).
+- Cover art: scans every image in the track folder and all subfolders, extracts embedded art to PNG, selects the best image (front-ish > album-named > everything else, then scope/size), converts to `cover.png`, strips embedded art from the temp audio copy, and exposes only `cover.png` to mpv (`--cover-art-auto=exact`). Album-name matching ignores junk tokens (pure numbers, very short tokens, audio extensions like `flac`/`mp3`).
 - IPC/GUI: mpv runs with a GUI window forced open; IPC socket at `/tmp/mpv-<pid>.sock` so you can pause/skip/query status from other terminals/scripts. Poll interval for playlist position is 5s.
 - Logging: per-track ReplayGain line and ART candidates, with a separator line after each track. Startup header is auto-sized with mode, path, socket, track count, buffer, and normalize status. Optional `ART_DEBUG=1` for verbose art selection logs.
 
@@ -53,6 +53,18 @@ play_album /path/to/album
 ```
 
 ## Cover selection details
+- It gathers images from the track’s folder (and subfolders) plus embedded art; with `--library` in multi-disc layouts it also checks the album’s top folder.
+- Front-ish images win first: preferred keywords (`cover`, `front`, `folder` by default; tweak `PREFERRED_IMAGE_KEYWORDS`) or filenames that share album-name words without “non-front” terms (`back`, `tray`, `cd`, `disc`, `inlay`, `inlet`, `booklet`, `book`, `spine`, `rear`, `inside`). Album-name matching ignores junk tokens (pure numbers, very short tokens, audio extensions).
+- Next come album-named files that do contain one of those “non-front” terms.
+- Everything else is last. Within a bucket, scope matters (disc/embedded > album-root > other, with an area override threshold), then resolution/size, then name-based tie-breakers. Album-name token count breaks ties inside the album-named bucket, and a much higher-resolution album-named image (with no non-front terms) can beat a small keyworded image when within the area threshold (`AREA_THRESHOLD_PCT`, default 75%).
+- Embedded art is extracted and compared like any other image; if it loses, it’s removed from the temp audio copy. The winner is exposed as `cover.png` in the temp dir. Keyworded disc-folder images still beat parent images.
+
+## Random algorithm
+- Current random mode is `full-library`. Libraries with <50 albums shuffle all tracks once (uniform, no replacement).
+- Libraries with ≥50 albums use album-spread: build an album → tracks map, pick a random album not seen in the recent history window, then a random track from that album. The history size is ~10% of album count, clamped to 20–200 and never reaching the full album count.
+- Recently played albums are avoided until they age out of the history window; playback continues indefinitely with albums rotating back in after they fall out of history.
+- The library is fully rescanned every hour and the album/track pool is rebuilt (recent-album history is kept, entries for deleted albums are dropped). Newly added albums can start playing without restarting the script.
+- Tunables live near the top of `mpv_music_wrapper.sh` (e.g., album thresholds, history percent/min/max, rescan interval).
 - Where it searches: track folder and subfolders, embedded art, and (with `--library` for multi-disc layouts) the album’s top folder.
 - Names and tokens:
   - Preferred keywords: `cover`, `front`, `folder` (configurable via `PREFERRED_IMAGE_KEYWORDS`).
