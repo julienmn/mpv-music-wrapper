@@ -13,15 +13,15 @@ PREFERRED_IMAGE_KEYWORDS=(cover front folder)
 IMAGE_PROBE_BIN="ffprobe"
 IMAGE_EXTRACT_BIN="ffmpeg"
 COVER_PREFERRED_FILE="cover.png"
-DISC_SCOPE_AREA_THRESHOLD_PCT=90  # Disc image can beat parent if within this % of parent area (when no keywords)
-ALBUM_SPREAD_THRESHOLD=50       # Album-aware random kicks in when >= this many albums
-ALBUM_HISTORY_MIN=20            # Minimum recent albums to avoid
-ALBUM_HISTORY_MAX=200           # Maximum recent albums to avoid
-ALBUM_HISTORY_PCT=10            # Target percent of albums to keep in history (avoid repeats)
-ALBUM_HISTORY_SIZE=0            # Filled by planner for random mode
+DISC_SCOPE_AREA_THRESHOLD_PCT=90 # Disc image can beat parent if within this % of parent area (when no keywords)
+ALBUM_SPREAD_THRESHOLD=50        # Album-aware random kicks in when >= this many albums
+ALBUM_HISTORY_MIN=20             # Minimum recent albums to avoid
+ALBUM_HISTORY_MAX=200            # Maximum recent albums to avoid
+ALBUM_HISTORY_PCT=10             # Target percent of albums to keep in history (avoid repeats)
+ALBUM_HISTORY_SIZE=0             # Filled by planner for random mode
 ALBUM_HISTORY=()
 LAST_RANDOM_RESCAN=0
-RANDOM_RESCAN_INTERVAL=3600     # seconds
+RANDOM_RESCAN_INTERVAL=3600 # seconds
 ALBUM_SPREAD_MODE=0
 TOTAL_ALBUM_COUNT=0
 TOTAL_TRACK_COUNT=0
@@ -106,6 +106,140 @@ display_path() {
     esac
   fi
   printf '%s' "$p"
+}
+
+strip_ansi() {
+  sed $'s/\x1B\\[[0-9;]*[mK]//g' <<<"$1"
+}
+
+visible_len() {
+  local s
+  s=$(strip_ansi "$1")
+  # Approximate emoji width as 2 columns
+  s=${s//🎵/aa}
+  s=${s//🔀/aa}
+  s=${s//💾/aa}
+  s=${s//🔁/aa}
+  s=${s//🎲/aa}
+  s=${s//💿/aa}
+  s=${s//🎯/aa}
+  s=${s//📜/aa}
+  echo "${#s}"
+}
+
+human_rescan_interval() {
+  ((RANDOM_RESCAN_INTERVAL > 0)) || {
+    echo "off"
+    return
+  }
+  local _m _h
+  _m=$((RANDOM_RESCAN_INTERVAL / 60))
+  _h=$((_m / 60))
+  _m=$((_m % 60))
+  if ((_h > 0)); then
+    printf "%dh%02dm" "$_h" "$_m"
+  else
+    printf "%dm" "$_m"
+  fi
+}
+
+print_header() {
+  local total="$1"
+
+  local mode_line="" path_line=""
+  local random_album_line="" random_desc_line=""
+  local rescan_pretty
+  rescan_pretty=$(human_rescan_interval)
+
+  case "$MODE" in
+  random)
+    mode_line="🔀 Mode: random"
+    path_line="💾 Library: $LIBRARY"
+    random_album_line="💿 Albums: $TOTAL_ALBUM_COUNT"
+    if ((ALBUM_SPREAD_MODE)); then
+      random_desc_line=$(printf '🔁 I rotate albums, skip the last %d of %d, and look for new music every %s.' "$ALBUM_HISTORY_SIZE" "$TOTAL_ALBUM_COUNT" "$rescan_pretty")
+    else
+      random_desc_line=$(printf '🎲 Single big shuffle (library has < %d albums).' "$ALBUM_SPREAD_THRESHOLD")
+    fi
+    ;;
+  album)
+    mode_line="🎯 Mode: album"
+    path_line="💾 Album: $ALBUM_DIR"
+    ;;
+  playlist)
+    mode_line="📜 Mode: playlist"
+    path_line="💾 Playlist: $PLAYLIST_FILE"
+    ;;
+  *)
+    mode_line="Mode: unknown"
+    path_line=""
+    ;;
+  esac
+
+  local -a header_lines=()
+  local title_line=$'\033[35m🎵 mpv music wrapper 🎵\033[0m'
+  header_lines+=("$title_line")
+  header_lines+=("---")
+  if [[ "$MODE" == "random" ]]; then
+    [[ -n "$path_line" ]] && header_lines+=("$path_line")
+    header_lines+=("$mode_line")
+    [[ -n "$random_desc_line" ]] && header_lines+=("$random_desc_line")
+    [[ -n "$random_album_line" ]] && header_lines+=("$random_album_line")
+  else
+    [[ -n "$path_line" ]] && header_lines+=("$path_line")
+    header_lines+=("$mode_line")
+  fi
+  header_lines+=("Tracks: $total")
+  header_lines+=("---")
+  header_lines+=("Socket: $SOCK")
+  header_lines+=("Buffer ahead: $BUFFER_AHEAD")
+  if ((NORMALIZE)); then
+    header_lines+=("Normalize: enabled (ReplayGain track)")
+  else
+    header_lines+=("Normalize: disabled")
+  fi
+
+  local max_len=0 line
+  for line in "${header_lines[@]}"; do
+    [[ "$line" == "---" ]] && continue
+    local vlen
+    vlen=$(visible_len "$line")
+    ((vlen > max_len)) && max_len=$vlen
+  done
+  local inner_width=$max_len
+
+  printf '\033[36m╔' >&2
+  printf '═%.0s' $(seq 1 $((inner_width + 2))) >&2
+  printf '╗\033[0m\n' >&2
+
+  local is_first=1
+  for line in "${header_lines[@]}"; do
+    if [[ "$line" == "---" ]]; then
+      printf '\033[36m╟' >&2
+      printf '─%.0s' $(seq 1 $((inner_width + 2))) >&2
+      printf '╢\033[0m\n' >&2
+      continue
+    fi
+    local pad_len vlen
+    vlen=$(visible_len "$line")
+    pad_len=$((inner_width - vlen))
+    ((pad_len < 0)) && pad_len=0
+    local left_pad=0
+    if ((is_first)); then
+      left_pad=$((pad_len / 2))
+      pad_len=$((pad_len - left_pad))
+      is_first=0
+    fi
+    printf '\033[36m║\033[0m ' >&2
+    printf '%*s' "$left_pad" "" >&2
+    printf '%s' "$line" >&2
+    printf '%*s' "$pad_len" "" >&2
+    printf ' \033[36m║\033[0m\n' >&2
+  done
+
+  printf '\033[36m╚' >&2
+  printf '═%.0s' $(seq 1 $((inner_width + 2))) >&2
+  printf '╝\033[0m\n' >&2
 }
 
 ext_in_list() {
@@ -265,6 +399,40 @@ add_track() {
   TRACKS+=("$1")
 }
 
+gather_image_candidates() {
+  local dir="$1" album_root="$2" is_multi="$3" audio_copy="$4" extract_dir="$5"
+  local out_name="$6"
+  local embedded_name="$7"
+  local -n out_arr="$out_name"
+  local -n embedded_ref="$embedded_name"
+
+  local -A seen=()
+  out_arr=()
+
+  local -a tmp_candidates=()
+  mapfile -d '' -t tmp_candidates < <(find_images_recursive "$dir" || true)
+  local f
+  for f in "${tmp_candidates[@]}"; do
+    [[ -n "${seen[$f]:-}" ]] && continue
+    seen["$f"]=1
+    out_arr+=("$f")
+  done
+
+  if ((is_multi)); then
+    mapfile -d '' -t tmp_candidates < <(find_images_recursive "$album_root" || true)
+    for f in "${tmp_candidates[@]}"; do
+      [[ -n "${seen[$f]:-}" ]] && continue
+      seen["$f"]=1
+      out_arr+=("$f")
+    done
+  fi
+
+  embedded_ref=$(extract_embedded_cover "$audio_copy" "$extract_dir" 2>/dev/null || true)
+  if [[ -n "$embedded_ref" ]]; then
+    out_arr+=("$embedded_ref")
+  fi
+}
+
 gather_random_tracks() {
   build_album_map
   if ((ALBUM_SPREAD_MODE)); then
@@ -373,11 +541,16 @@ choose_album_for_play() {
   ((hist_cap > album_count - 1)) && hist_cap=$((album_count - 1))
 
   local -a candidates=()
+  declare -A blocked=()
+  local h
+  for h in "${ALBUM_HISTORY[@]}"; do
+    blocked["$h"]=1
+  done
+
   local a
   for a in "${ALBUMS[@]}"; do
-    if ! album_history_contains "$a" "$hist_cap"; then
-      candidates+=("$a")
-    fi
+    [[ -n "${blocked[$a]:-}" ]] && continue
+    candidates+=("$a")
   done
   if ((${#candidates[@]} == 0)); then
     candidates=("${ALBUMS[@]}")
@@ -428,7 +601,7 @@ maybe_refresh_album_map() {
 next_album_spread_track() {
   maybe_refresh_album_map
   ((ALBUM_SPREAD_MODE)) || return 1
-  (( ${#ALBUMS[@]} > 0 )) || return 1
+  ((${#ALBUMS[@]} > 0)) || return 1
 
   local album
   album=$(choose_album_for_play) || return 1
@@ -576,9 +749,8 @@ select_cover_for_track() {
   local -a candidates=()
   local embedded=""
   local dir f area kw name lower kwd dims w h size src_type disp_path kw_rank
-  local best="" best_area=-1 best_kw_match=0 best_kw_rank=999 best_name="" best_src="external" best_w=0 best_h=0 best_size=-1 best_scope_rank=999
+  local best="" best_area=-1 best_kw_count=0 best_kw_rank=999 best_name="" best_src="external" best_w=0 best_h=0 best_size=-1 best_scope_rank=999
   local -a detail_lines=()
-  local -A seen_candidates=()
 
   COVER_SELECTED_META=""
   COVER_SELECTED_DETAIL="[ ] no images found"
@@ -592,27 +764,7 @@ select_cover_for_track() {
     is_multi_disc=1
   fi
 
-  local -a tmp_candidates=()
-  mapfile -d '' -t tmp_candidates < <(find_images_recursive "$dir" || true)
-  for f in "${tmp_candidates[@]}"; do
-    [[ -n "${seen_candidates[$f]:-}" ]] && continue
-    seen_candidates["$f"]=1
-    candidates+=("$f")
-  done
-
-  if ((is_multi_disc)); then
-    mapfile -d '' -t tmp_candidates < <(find_images_recursive "$album_root" || true)
-    for f in "${tmp_candidates[@]}"; do
-      [[ -n "${seen_candidates[$f]:-}" ]] && continue
-      seen_candidates["$f"]=1
-      candidates+=("$f")
-    done
-  fi
-
-  embedded=$(extract_embedded_cover "$audio_copy" "$dst_dir" 2>/dev/null || true)
-  if [[ -n "$embedded" ]]; then
-    candidates+=("$embedded")
-  fi
+  gather_image_candidates "$dir" "$album_root" "$is_multi_disc" "$audio_copy" "$dst_dir" candidates embedded
 
   for f in "${candidates[@]}"; do
     dims=$(image_dims_area "$f")
@@ -620,14 +772,17 @@ select_cover_for_track() {
     size=$(stat -c %s "$f" 2>/dev/null || echo 0)
     kw=0
     kw_rank=999
+    local kw_count=0
     lower=$(basename "$f")
     lower=${lower,,}
     local idx=0
     for kwd in "${PREFERRED_IMAGE_KEYWORDS[@]}"; do
       if [[ "$lower" == *"$kwd"* ]]; then
         kw=1
-        kw_rank=$idx
-        break
+        kw_count=$((kw_count + 1))
+        if ((kw_rank == 999)); then
+          kw_rank=$idx
+        fi
       fi
       idx=$((idx + 1))
     done
@@ -649,7 +804,7 @@ select_cover_for_track() {
         scope_rank=1
       fi
     fi
-    detail_lines+=("path=$disp_path src=$src_type scope=$scope res=${w}x${h} area=$area size=$size kw=$kw")
+    detail_lines+=("path=$disp_path src=$src_type scope=$scope res=${w}x${h} area=$area size=$size kwcount=$kw_count")
 
     local pick=0
     local allow_worse_scope_override=0
@@ -663,9 +818,9 @@ select_cover_for_track() {
       fi
     fi
 
-    if ((kw == 1 && best_kw_match == 0)); then
+    if ((kw_count > best_kw_count)); then
       pick=1
-    elif ((kw == 1 && best_kw_match == 1)); then
+    elif ((kw_count == best_kw_count && kw_count > 0)); then
       if ((scope_rank < best_scope_rank)); then
         pick=1
       elif ((scope_rank == best_scope_rank && area > best_area)); then
@@ -679,7 +834,7 @@ select_cover_for_track() {
       elif ((scope_rank > best_scope_rank && allow_worse_scope_override && area > best_area)); then
         pick=1
       fi
-    elif ((kw == 0 && best_kw_match == 0)); then
+    elif ((kw_count == 0 && best_kw_count == 0)); then
       local within_threshold=0
       if ((best_area > 0)); then
         if ((area * 100 >= best_area * DISC_SCOPE_AREA_THRESHOLD_PCT)); then
@@ -705,7 +860,7 @@ select_cover_for_track() {
     if ((pick)); then
       best="$f"
       best_area=$area
-      best_kw_match=$kw
+      best_kw_count=$kw_count
       best_kw_rank=$kw_rank
       best_name="$name"
       best_w=$w
@@ -721,7 +876,7 @@ select_cover_for_track() {
   fi
 
   if [[ -n "$best" ]]; then
-    COVER_SELECTED_META="${best_src}|${best_w}|${best_h}|${best_area}|${best_kw_match}|${best_size}"
+    COVER_SELECTED_META="${best_src}|${best_w}|${best_h}|${best_area}|${best_kw_count}|${best_size}"
     local formatted=()
     for line in "${detail_lines[@]}"; do
       if [[ "$line" == path="$(display_path "$best")"* && "$best_src" == "external" ]]; then
@@ -1095,9 +1250,9 @@ main() {
   check_dependencies
 
   case "$MODE" in
-    random) printf '\033[36m[info]\033[0m Building shuffled list from \033[35m%s\033[0m (this may take a few seconds)\n' "$LIBRARY";;
-    album) printf '\033[36m[info]\033[0m Preparing album from \033[35m%s\033[0m\n' "$ALBUM_DIR";;
-    playlist) printf '\033[36m[info]\033[0m Preparing playlist from \033[35m%s\033[0m\n' "$PLAYLIST_FILE";;
+  random) printf '\033[36m[info]\033[0m Building shuffled list from \033[35m%s\033[0m (this may take a few seconds)\n' "$LIBRARY" ;;
+  album) printf '\033[36m[info]\033[0m Preparing album from \033[35m%s\033[0m\n' "$ALBUM_DIR" ;;
+  playlist) printf '\033[36m[info]\033[0m Preparing playlist from \033[35m%s\033[0m\n' "$PLAYLIST_FILE" ;;
   esac
 
   case "$MODE" in
@@ -1111,86 +1266,7 @@ main() {
     total=$TOTAL_TRACK_COUNT
   fi
 
-  # Fancy header around startup info (colored)
-  local mode_line="" path_line=""
-  local random_album_line="" random_desc_line="" rescan_pretty=""
-  if ((RANDOM_RESCAN_INTERVAL > 0)); then
-    local _m _h
-    _m=$((RANDOM_RESCAN_INTERVAL / 60))
-    _h=$((_m / 60))
-    _m=$((_m % 60))
-    if ((_h > 0)); then
-      rescan_pretty=$(printf "%dh%02dm" "$_h" "$_m")
-    else
-      rescan_pretty=$(printf "%dm" "$_m")
-    fi
-  fi
-  case "$MODE" in
-    random)
-      mode_line="Mode: random"
-      path_line="Library: $LIBRARY"
-      random_album_line="Albums: $TOTAL_ALBUM_COUNT"
-      if ((ALBUM_SPREAD_MODE)); then
-        random_desc_line=$(printf 'Random: I rotate albums, skip the last %d of %d, and look for new music every %s.' "$ALBUM_HISTORY_SIZE" "$TOTAL_ALBUM_COUNT" "${rescan_pretty:-off}")
-      else
-        random_desc_line=$(printf 'Random: single big shuffle (library has < %d albums).' "$ALBUM_SPREAD_THRESHOLD")
-      fi
-      ;;
-    album)
-      mode_line="Mode: album"
-      path_line="Album: $ALBUM_DIR"
-      ;;
-    playlist)
-      mode_line="Mode: playlist"
-      path_line="Playlist: $PLAYLIST_FILE"
-      ;;
-    *)
-      mode_line="Mode: unknown"
-      path_line=""
-      ;;
-  esac
-
-  local -a header_lines=()
-  header_lines+=("mpv music wrapper")
-  header_lines+=("$mode_line")
-  if [[ "$MODE" == "random" ]]; then
-    if [[ -n "$path_line" ]]; then
-      header_lines+=("$path_line")
-    fi
-    [[ -n "$random_desc_line" ]] && header_lines+=("$random_desc_line")
-    [[ -n "$random_album_line" ]] && header_lines+=("$random_album_line")
-  else
-    if [[ -n "$path_line" ]]; then
-      header_lines+=("$path_line")
-    fi
-  fi
-  header_lines+=("Socket: $SOCK")
-  header_lines+=("Tracks: $total")
-  header_lines+=("Buffer ahead: $BUFFER_AHEAD")
-  if ((NORMALIZE)); then
-    header_lines+=("Normalize: enabled (ReplayGain track)")
-  else
-    header_lines+=("Normalize: disabled")
-  fi
-
-  local max_len=0 line
-  for line in "${header_lines[@]}"; do
-    (( ${#line} > max_len )) && max_len=${#line}
-  done
-  local inner_width=$max_len
-
-  # Build top/bottom borders dynamically
-  printf '\033[36m╔' >&2
-  printf '═%.0s' $(seq 1 $((inner_width + 2))) >&2
-  printf '╗\033[0m\n' >&2
-
-  for line in "${header_lines[@]}"; do
-    printf '\033[36m║\033[0m %-*s \033[36m║\033[0m\n' "$inner_width" "$line"
-  done
-
-  printf '\033[36m╚' >&2
-  printf '═%.0s' $(seq 1 $((inner_width + 2))) >&2
-  printf '╝\033[0m\n' >&2
+  print_header "$total"
 
   ensure_tmp_root
 
@@ -1235,16 +1311,16 @@ main() {
     fi
 
     local p=$pos
-  if ((p != current_pos)); then
-    clean_finished "$p" last_cleaned
-    current_pos=$p
-    print_rg_for_pos "$p"
-    if ((ALBUM_SPREAD_MODE)); then
-      queue_more "$total" current_pos highest_appended next_to_prepare || break
-    else
-      queue_more "$total" current_pos highest_appended next_to_prepare
+    if ((p != current_pos)); then
+      clean_finished "$p" last_cleaned
+      current_pos=$p
+      print_rg_for_pos "$p"
+      if ((ALBUM_SPREAD_MODE)); then
+        queue_more "$total" current_pos highest_appended next_to_prepare || break
+      else
+        queue_more "$total" current_pos highest_appended next_to_prepare
+      fi
     fi
-  fi
   done
 
   rm -rf -- "$TMP_ROOT"
