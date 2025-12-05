@@ -1153,12 +1153,16 @@ main() {
   local -a header_lines=()
   header_lines+=("mpv music wrapper")
   header_lines+=("$mode_line")
-  if [[ -n "$path_line" ]]; then
-    header_lines+=("$path_line")
-  fi
   if [[ "$MODE" == "random" ]]; then
-    [[ -n "$random_album_line" ]] && header_lines+=("$random_album_line")
+    if [[ -n "$path_line" ]]; then
+      header_lines+=("$path_line")
+    fi
     [[ -n "$random_desc_line" ]] && header_lines+=("$random_desc_line")
+    [[ -n "$random_album_line" ]] && header_lines+=("$random_album_line")
+  else
+    if [[ -n "$path_line" ]]; then
+      header_lines+=("$path_line")
+    fi
   fi
   header_lines+=("Socket: $SOCK")
   header_lines+=("Tracks: $total")
