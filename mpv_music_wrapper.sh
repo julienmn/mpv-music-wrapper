@@ -1460,6 +1460,9 @@ main() {
   playlist) printf '\033[36m[info]\033[0m Preparing playlist from \033[35m%s\033[0m\n' "$PLAYLIST_FILE" ;;
   esac
 
+  # Start mpv early so the window/IPC socket is up while we scan
+  start_mpv
+
   case "$MODE" in
   random) gather_random_tracks ;;
   album) gather_album_tracks ;;
@@ -1474,8 +1477,6 @@ main() {
   print_header "$total"
 
   ensure_tmp_root
-
-  start_mpv
 
   local next_to_prepare=0
   local highest_appended=-1
