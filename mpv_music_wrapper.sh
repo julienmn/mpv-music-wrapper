@@ -937,6 +937,11 @@ select_cover_for_track() {
         elif ((pref_kw_count > 0 && has_non_front == 0 && best_pref_kw_count > 0 && allow_worse_scope_override == 0 && area * 100 >= best_area * AREA_THRESHOLD_PCT && best_kw_rank <= kw_rank && best_area > 0)); then
           # Both keyworded: prefer the one without non-front terms when sizes are close
           pick=1
+        elif ((pref_kw_count > 0 && best_pref_kw_count > 0 && scope_rank == best_scope_rank && area == best_area && kw_rank == best_kw_rank && size == best_size)); then
+          # Final tie among keyworded images: prefer current disc folder over sibling disc
+          if [[ "$scope" == "disc" && "$dir" != "$album_root" && "$f" == "$dir"* && "$best" != "$dir"* ]]; then
+            pick=1
+          fi
         elif ((scope_rank < best_scope_rank)); then
           pick=1
         elif ((scope_rank == best_scope_rank && area > best_area)); then
