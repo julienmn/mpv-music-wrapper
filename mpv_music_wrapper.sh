@@ -11,6 +11,7 @@ PLAYLIST_EXTS=(m3u m3u8 pls cue)
 IMAGE_EXTS=(jpg jpeg png webp gif bmp tiff tif svg)
 PREFERRED_IMAGE_KEYWORDS=(cover front folder)
 NON_FRONT_IMAGE_KEYWORDS=(back tray cd disc inlay inlet booklet book spine rear inside tracklisting)
+TINY_FRONT_AREA=200000           # pixels (~0.2MP) threshold for treating front-ish art as tiny
 IMAGE_PROBE_BIN="ffprobe"
 IMAGE_EXTRACT_BIN="ffmpeg"
 COVER_PREFERRED_FILE="cover.png"
@@ -799,7 +800,7 @@ select_cover_for_track() {
   local embedded=""
   local dir f area kw name lower kwd dims w h size src_type disp_path kw_rank
   local best="" best_area=-1 best_kw_count=0 best_kw_rank=999 best_name="" best_src="external" best_w=0 best_h=0 best_size=-1 best_scope_rank=999
-  local best_pref_kw_count=0 best_name_token_score=0 best_bucket=3
+  local best_pref_kw_count=0 best_name_token_score=0 best_bucket=3 best_has_non_front=0
   local -a detail_lines=()
 
   COVER_SELECTED_META=""
@@ -934,12 +935,35 @@ select_cover_for_track() {
           pick=1
         elif ((pref_kw_count == 0 && has_non_front == 0 && name_token_score == best_name_token_score && area * 100 >= best_area * AREA_THRESHOLD_PCT && scope_rank <= best_scope_rank)); then
           pick=1
-        elif ((pref_kw_count > 0 && has_non_front == 0 && best_pref_kw_count > 0 && allow_worse_scope_override == 0 && area * 100 >= best_area * AREA_THRESHOLD_PCT && best_kw_rank <= kw_rank && best_area > 0)); then
-          # Both keyworded: prefer the one without non-front terms when sizes are close
-          pick=1
-        elif ((pref_kw_count > 0 && best_pref_kw_count > 0 && scope_rank == best_scope_rank && area == best_area && kw_rank == best_kw_rank && size == best_size)); then
-          # Final tie among keyworded images: prefer current disc folder over sibling disc
-          if [[ "$scope" == "disc" && "$dir" != "$album_root" && "$f" == "$dir"* && "$best" != "$dir"* ]]; then
+        elif ((pref_kw_count > 0 && best_pref_kw_count > 0)); then
+          if ((has_non_front == 0 && best_has_non_front == 1)); then
+            # Prefer front-ish keyworded unless it is tiny
+            if ((area >= TINY_FRONT_AREA)); then
+              pick=1
+            fi
+          elif ((has_non_front == 1 && best_has_non_front == 0)); then
+            # Only let non-front win if front-ish is tiny and non-front is much larger
+            if ((best_area > 0 && best_area < TINY_FRONT_AREA)); then
+              if ((area * 100 >= best_area * (100 + (100 - AREA_THRESHOLD_PCT)))); then
+                pick=1
+              fi
+            fi
+          elif ((scope_rank < best_scope_rank)); then
+            pick=1
+          elif ((scope_rank == best_scope_rank && area > best_area)); then
+            pick=1
+          elif ((scope_rank == best_scope_rank && area == best_area && kw_rank < best_kw_rank)); then
+            pick=1
+          elif ((scope_rank == best_scope_rank && area == best_area && kw_rank == best_kw_rank && size > best_size)); then
+            pick=1
+          elif ((scope_rank == best_scope_rank && area == best_area && kw_rank == best_kw_rank && size == best_size)) && { [[ -z "$best_name" ]] || [[ "$name" < "$best_name" ]]; }; then
+            pick=1
+          elif ((scope_rank == best_scope_rank && area == best_area && kw_rank == best_kw_rank && size == best_size)); then
+            # Final tie among keyworded images: prefer current disc folder over sibling disc
+            if [[ "$scope" == "disc" && "$dir" != "$album_root" && "$f" == "$dir"* && "$best" != "$dir"* ]]; then
+              pick=1
+            fi
+          elif ((scope_rank > best_scope_rank && allow_worse_scope_override && area > best_area)); then
             pick=1
           fi
         elif ((scope_rank < best_scope_rank)); then
@@ -1029,6 +1053,7 @@ select_cover_for_track() {
       best_pref_kw_count=$pref_kw_count
       best_name_token_score=$name_token_score
       best_name="$name"
+      best_has_non_front=$has_non_front
       best_w=$w
       best_h=$h
       best_size=$size
