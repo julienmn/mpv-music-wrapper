@@ -49,7 +49,7 @@ ALBUMS=()
 declare -A ALBUM_TRACK_FILES=()
 declare -A ALBUM_TRACK_COUNT=()
 
-log_info() { printf '[info] %s\n' "$*"; }
+log_info() { printf '[info] %s\n' "$*" >&2; }
 log_warn() { printf '[warn] %s\n' "$*" >&2; }
 log_error() { printf '[error] %s\n' "$*" >&2; }
 die() {
