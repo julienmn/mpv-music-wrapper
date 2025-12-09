@@ -132,6 +132,8 @@ visible_len() {
 normalize_name_tokens() {
   local s="$1"
   s=${s,,}
+  # Break camelCase/PascalCase into separate words before non-alnum stripping
+  s=$(sed 's/\([a-z]\)\([A-Z]\)/\1 \2/g; s/\([A-Z]\)\([A-Z][a-z]\)/\1 \2/g' <<<"$s")
   s=$(tr -cs '[:alnum:]' ' ' <<<"$s")
   read -r -a toks <<<"$s"
   printf '%s\n' "${toks[@]}"
