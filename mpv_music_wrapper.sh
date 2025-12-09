@@ -1275,6 +1275,30 @@ copy_audio() {
   cp --reflink=auto -- "$src" "$dst"
 }
 
+strip_id3_if_flac() {
+  local file="$1"
+  local ext=${file##*.}
+  ext=${ext,,}
+  [[ "$ext" == "flac" ]] || return 0
+
+  if ((METAFLAC_AVAILABLE)); then
+    metaflac --remove --block-type=ID3 "$file" 2>/dev/null || true
+  else
+    maybe_warn_metaflac
+  fi
+
+  local tmp
+  tmp=$(mktemp "${file}.clean.XXXXXX") || return 0
+  if "$IMAGE_EXTRACT_BIN" -loglevel error -nostdin -y -i "$file" \
+    -map 0:a -map_metadata 0 -vn -dn -sn -c copy "$tmp" 2>/dev/null; then
+    if [[ -s "$tmp" ]]; then
+      mv -- "$tmp" "$file"
+      return 0
+    fi
+  fi
+  rm -f -- "$tmp" 2>/dev/null || true
+}
+
 strip_rg_tags_if_possible() {
   local file="$1"
   local ext
@@ -1296,7 +1320,9 @@ add_replaygain_if_requested() {
   ((NORMALIZE)) || return 0
   [[ "$ext" == "flac" ]] || return 0
   ((METAFLAC_AVAILABLE)) || return 0
-  metaflac --add-replay-gain "$file" 2>/dev/null || true
+  if ! metaflac --add-replay-gain "$file" 2>/dev/null; then
+    log_warn "replaygain scan failed for $file; RG tags not added"
+  fi
 }
 
 prepare_track() {
@@ -1309,6 +1335,7 @@ prepare_track() {
   dst="$dst_dir/$base"
 
   copy_audio "$src" "$dst"
+  strip_id3_if_flac "$dst"
   strip_embedded_art "$dst"
   strip_rg_tags_if_possible "$dst"
   add_replaygain_if_requested "$dst"
