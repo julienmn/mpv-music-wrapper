@@ -452,9 +452,9 @@ add_track() {
 }
 
 gather_image_candidates() {
-  local dir="$1" album_root="$2" is_multi="$3" audio_copy="$4" extract_dir="$5"
-  local out_name="$6"
-  local embedded_name="$7"
+  local dir="$1" album_root="$2" is_multi="$3" audio_src="$4" audio_copy="$5" extract_dir="$6"
+  local out_name="$7"
+  local embedded_name="$8"
   local -n out_arr="$out_name"
   local -n embedded_ref="$embedded_name"
 
@@ -479,7 +479,7 @@ gather_image_candidates() {
     done
   fi
 
-  embedded_ref=$(extract_embedded_cover "$audio_copy" "$extract_dir" 2>/dev/null || true)
+  embedded_ref=$(extract_embedded_cover "$audio_src" "$extract_dir" 2>/dev/null || true)
   if [[ -n "$embedded_ref" ]]; then
     out_arr+=("$embedded_ref")
   fi
@@ -827,7 +827,7 @@ select_cover_for_track() {
     base_root="${dir%/}"
   fi
 
-  gather_image_candidates "$dir" "$album_root" "$is_multi_disc" "$audio_copy" "$dst_dir" candidates embedded
+  gather_image_candidates "$dir" "$album_root" "$is_multi_disc" "$track" "$audio_copy" "$dst_dir" candidates embedded
 
   for f in "${candidates[@]}"; do
     dims=$(image_dims_area "$f")
