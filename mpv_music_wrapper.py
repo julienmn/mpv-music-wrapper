@@ -468,7 +468,10 @@ def select_cover_for_track(track: Path, dst_dir: Path, audio_copy: Path, album_r
     if album_root and dir_path != album_root and str(dir_path).startswith(str(album_root)):
         is_multi = True
 
-    album_token = album_root.name if album_root else dir_path.name
+    if album_root and album_root == dir_path.parent:
+        album_token = dir_path.name
+    else:
+        album_token = album_root.name if album_root else dir_path.name
     album_tokens = clean_album_tokens(album_token)
     base_root = album_root if album_root else dir_path
 
@@ -533,7 +536,7 @@ def select_cover_for_track(track: Path, dst_dir: Path, audio_copy: Path, album_r
 
         rel_path = disp_path
         if src_type == "external" and base_root and str(f).startswith(str(base_root)):
-            rel_path = f"../{f.relative_to(base_root)}"
+            rel_path = str(f.relative_to(base_root))
         elif src_type == "embedded":
             rel_path = "EMBEDDED"
 
