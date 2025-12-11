@@ -90,18 +90,18 @@ play_album /path/to/album
 - Poll interval: 5 seconds.
 
 ## Controlling mpv via IPC helper
-`mpv_send_key.py` sends simple controls to any mpv IPC socket (default glob `/tmp/mpv-*`, filters to real sockets):
+`mpv-send-key.py` sends simple controls to any mpv IPC socket (default glob `/tmp/mpv-*`, filters to real sockets):
 
 ```bash
-./mpv_send_key.py pause      # toggle pause
-./mpv_send_key.py next       # playlist next (weak)
-./mpv_send_key.py prev       # playlist prev (weak)
+./mpv-send-key.py pause      # toggle pause
+./mpv-send-key.py next       # playlist next (weak)
+./mpv-send-key.py prev       # playlist prev (weak)
 
 # Target a specific socket (or glob)
-./mpv_send_key.py pause '/tmp/mpv-music-*'
+./mpv-send-key.py pause '/tmp/mpv-music-*'
 
 # Debug (shows sockets found/errors)
-MPV_SEND_DEBUG=1 ./mpv_send_key.py pause
+MPV_SEND_DEBUG=1 ./mpv-send-key.py pause
 ```
 
 You can bind these commands to global hotkeys in your desktop environment/window manager (e.g., map Pause/Play/PgUp/PgDn keys to run `./mpv-send-key.sh pause|next|prev`).
