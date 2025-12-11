@@ -1,6 +1,6 @@
 # mpv music wrapper
 
-CLI music player (mpv wrapper) that plays directly from your library with optional on-the-fly per-track ReplayGain (no pre-scan or duplicate ReplayGain library), smart cover-art handling (scans folder/subfolders + embedded, picks best by keyword/resolution), RAM staging (keeps your disks/library untouched), and mpv IPC control (pause/skip/status from other tools). Supports random library shuffle, whole-album playback, and playlist playback from common playlist formats.
+CLI music player (mpv wrapper) that plays directly from your library with optional on-the-fly per-track ReplayGain (no pre-scan or duplicate ReplayGain library), smart cover-art handling (scans folder/subfolders + embedded, picks best by keyword/resolution), RAM staging (keeps your disks/library untouched), and mpv IPC control (pause/skip/status from other tools). Supports random library shuffle, whole-album playback, and playlist playback from common playlist formats. The wrapper is now implemented in Python for portability and fewer dependencies (originally Bash).
 
 <img src="2025-12-03_13-12.jpg" alt="Screenshot" width="60%" />
 
@@ -13,9 +13,8 @@ CLI music player (mpv wrapper) that plays directly from your library with option
 - Logging: per-track ReplayGain line and ART candidates, with a separator line after each track. Startup header is auto-sized with mode, path, socket, track count, buffer, and normalize status. Optional `ART_DEBUG=1` for verbose art selection logs.
 
 ## Requirements
-- bash, find, shuf
+- python 3
 - mpv
-- python (for IPC helper)
 - ffprobe and ffmpeg
 - metaflac (required when using `--normalize`; otherwise ReplayGain strip/scan is skipped for FLAC)
 
@@ -24,26 +23,28 @@ Run from the repository root (or place the script on PATH):
 
 ```bash
 # Random mode (library required)
-./mpv_music_wrapper.sh --random-mode=full-library --library=/home/johndoe/music/ --normalize
+./mpv_music_wrapper.py --random-mode=full-library --library=/home/johndoe/music/ --normalize
 
 # Album mode
-./mpv_music_wrapper.sh --album=/path/to/album --normalize
+./mpv_music_wrapper.py --album=/path/to/album --normalize
 # Album mode with library (enables parent cover search for multi-disc albums)
-./mpv_music_wrapper.sh --album=/home/johndoe/music/Album --library=/home/johndoe/music/ --normalize
+./mpv_music_wrapper.py --album=/home/johndoe/music/Album --library=/home/johndoe/music/ --normalize
 
 # Playlist mode
-./mpv_music_wrapper.sh --playlist=/path/to/list.m3u8 --normalize
+./mpv_music_wrapper.py --playlist=/path/to/list.m3u8 --normalize
 ```
 
 You can omit `--normalize` to skip ReplayGain scanning (files are still copied/stripped; mpv uses `--replaygain=no`).
+
+Pass additional mpv flags via `--mpv-additional-args="--your --mpv-flags"`.
 
 For album mode, adding `--library=/path/to/your/music` lets the wrapper fall back to album-level cover art (folder directly under the library root) when tracks live in disc subfolders.
 
 ### Examples for shell functions / aliases
 Add to `~/.bashrc` (adjust paths as needed):
 ```bash
-play_random_music(){ ./mpv_music_wrapper.sh --random-mode=full-library --library=/home/johndoe/music/ --normalize; }
-play_album(){ ./mpv_music_wrapper.sh --album="$1" --library=/home/johndoe/music/ --normalize; }
+play_random_music(){ ./mpv_music_wrapper.py --random-mode=full-library --library=/home/johndoe/music/ --normalize; }
+play_album(){ ./mpv_music_wrapper.py --album="$1" --library=/home/johndoe/music/ --normalize; }
 ```
 
 Then use:
@@ -78,12 +79,12 @@ play_album /path/to/album
 - Libraries with ≥50 albums use album-spread: build an album → tracks map, pick a random album not seen in the recent history window, then a random track from that album. The history size is ~10% of album count, clamped to 20–200 and never reaching the full album count.
 - Recently played albums are avoided until they age out of the history window; playback continues indefinitely with albums rotating back in after they fall out of history.
 - The library is fully rescanned every hour and the album/track pool is rebuilt (recent-album history is kept, entries for deleted albums are dropped). Newly added albums can start playing without restarting the script.
-- Tunables live near the top of `mpv_music_wrapper.sh` (e.g., album thresholds, history percent/min/max, rescan interval).
+- Tunables live near the top of `mpv_music_wrapper.py` (e.g., album thresholds, history percent/min/max, rescan interval).
 ## Playlists
 - Supported: m3u/m3u8/pls/cue. Non-audio entries are skipped with warnings. Relative paths are resolved against the playlist location.
 
 ## Behavior and safety
-- Library is read-only; all processing occurs on temp copies in RAM (`/dev/shm/mpv-music-<pid>-XXXXXX`).
+- Library is read-only; all processing occurs on temp copies in RAM (`/dev/shm/mpv-music-<pid>-XXXXXX` when available; override with `MPV_MUSIC_TMPDIR`).
 - Per-track temps are cleaned as playback advances; everything is cleaned on exit.
 - IPC socket: `/tmp/mpv-<pid>.sock`.
 - Poll interval: 5 seconds.
