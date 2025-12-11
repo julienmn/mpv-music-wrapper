@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-mpv-send-key.sh — send a control command to mpv IPC sockets.
+mpv_send_key.py — send a control command to mpv IPC sockets.
 
 Usage:
-  mpv-send-key.sh pause
-  mpv-send-key.sh next
-  mpv-send-key.sh prev
+  mpv_send_key.py pause
+  mpv_send_key.py next
+  mpv_send_key.py prev
 
 Optional:
-  MPV_SEND_DEBUG=1 mpv-send-key.sh pause
+  MPV_SEND_DEBUG=1 mpv_send_key.py pause
     -> print which sockets are found and any errors.
 
-  mpv-send-key.sh pause '/tmp/mpv-main'
+  mpv_send_key.py pause '/tmp/mpv-main'
     -> only target a specific socket (or glob pattern).
 """
 
