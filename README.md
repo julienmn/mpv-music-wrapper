@@ -104,7 +104,7 @@ play_album /path/to/album
 MPV_SEND_DEBUG=1 ./mpv_send_key.py pause
 ```
 
-You can bind these commands to global hotkeys in your desktop environment/window manager (e.g., map Pause/Play/PgUp/PgDn keys to run `./mpv-send-key.sh pause|next|prev`).
+You can bind these commands to global hotkeys in your desktop environment/window manager (e.g., map Pause/Play/PgUp/PgDn keys to run `./mpv_send_key.py pause|next|prev`).
 
 ## Debugging
 - Set `ART_DEBUG=1` to print detailed art candidate selection, stored cover meta, and track separators.
