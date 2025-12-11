@@ -583,7 +583,14 @@ def select_cover_for_track(track: Path, dst_dir: Path, audio_copy: Path, album_r
             pick = True
         elif cand.bucket == best.bucket == 1:
             if cand.pref_kw_count > best.pref_kw_count:
-                pick = True
+                # Allow high-res album-named art (no keywords) to beat a smaller keyworded image.
+                if best.pref_kw_count == 0 and best.name_token_score > 0 and not best.has_non_front:
+                    if cand.area * 100 < best.area * AREA_THRESHOLD_PCT:
+                        pick = False
+                    else:
+                        pick = True
+                else:
+                    pick = True
             elif cand.pref_kw_count == best.pref_kw_count:
                 if cand.pref_kw_count == 0 and not cand.has_non_front and cand.name_token_score > best.name_token_score and cand.area * 100 >= best.area * AREA_THRESHOLD_PCT:
                     pick = True
