@@ -80,7 +80,7 @@ play_album /path/to/album
 - Recently played albums are avoided until they age out of the recent-albums window; playback continues indefinitely with albums rotating back in after they fall out of the window.
 - The library is fully rescanned every hour and the album/track pool is rebuilt (recent albums list is kept, entries for deleted albums are dropped). Newly added albums can start playing without restarting the script.
 - Tunables live near the top of `mpv_music_wrapper.py` (e.g., album thresholds, recent-albums percent/min/max, rescan interval).
-- Optional: `--persist-recent-albums` saves/loads the recent albums list to a JSON cache in your user cache dir so frequent restarts don’t repeat the same albums.
+- Optional: `--persist-recent-albums` saves/loads the recent albums list to a JSON cache in your user cache dir so frequent restarts don’t repeat the same albums. You can override the cache path via the `RECENT_ALBUMS_CACHE_PATH_OVERRIDE` constant (leave it `None` to use the platform default).
 ## Playlists
 - Supported: m3u/m3u8/pls/cue. Non-audio entries are skipped with warnings. Relative paths are resolved against the playlist location.
 
