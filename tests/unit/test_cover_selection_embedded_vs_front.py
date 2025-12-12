@@ -38,34 +38,56 @@ def make_candidate(
 
 
 def test_embedded_should_not_beat_huge_front_when_both_bucket1():
-    # Embedded: small, bucket 1 via keyword, scope embedded.
-    embedded = make_candidate(
-        "EMBEDDED",
-        width=500,
-        height=500,
-        size_mb=0.4,
-        bucket=1,
-        pref_kw_count=1,
-        scope_rank=0,
-        src_type="embedded",
-        is_embedded=True,
-    )
-    # Front cover: large, bucket 1 via keyword, scope album-root (higher rank than embedded).
-    front = make_candidate(
-        "Covers/front.png",
-        width=6452,
-        height=3172,
-        size_mb=115.8,
-        bucket=1,
-        pref_kw_count=1,
-        scope_rank=1,
-        src_type="external",
-        is_embedded=False,
-    )
+    # Reproduce the Grease candidate list from the log, preserving order.
+    back = make_candidate("Covers/back.png", 6452, 3172, 116.4, bucket=3)
+    book1 = make_candidate("Covers/book1.png", 6396, 3212, 111.4, bucket=3)
+    book10 = make_candidate("Covers/book10.png", 6396, 3212, 63.8, bucket=3)
+    book11 = make_candidate("Covers/book11.png", 6396, 3212, 62.8, bucket=3)
+    book12 = make_candidate("Covers/book12.png", 6396, 3212, 69.6, bucket=3)
+    book13 = make_candidate("Covers/book13.png", 6396, 3212, 71.0, bucket=3)
+    book14 = make_candidate("Covers/book14.png", 6396, 3212, 70.6, bucket=3)
+    book2 = make_candidate("Covers/book2.png", 6396, 3212, 72.9, bucket=3)
+    book3 = make_candidate("Covers/book3.png", 6396, 3212, 70.4, bucket=3)
+    book4 = make_candidate("Covers/book4.png", 6396, 3212, 72.4, bucket=3)
+    book5 = make_candidate("Covers/book5.png", 6396, 3212, 69.0, bucket=3)
+    book6 = make_candidate("Covers/book6.png", 6396, 3212, 65.1, bucket=3)
+    book7 = make_candidate("Covers/book7.png", 6396, 3212, 70.6, bucket=3)
+    book8 = make_candidate("Covers/book8.png", 6396, 3212, 65.2, bucket=3)
+    book9 = make_candidate("Covers/book9.png", 6396, 3212, 63.2, bucket=3)
+    cd1 = make_candidate("Covers/cd1.png", 2884, 2832, 42.7, bucket=3)
+    cd2 = make_candidate("Covers/cd2.png", 2848, 2856, 42.8, bucket=1, pref_kw_count=1)
+    front = make_candidate("Covers/front.png", 6452, 3172, 115.8, bucket=1, pref_kw_count=1)
+    inlay_back = make_candidate("Covers/inlay back.png", 2952, 3020, 44.6, bucket=3)
+    inlay_front = make_candidate("Covers/inlay front.png", 2976, 3024, 46.7, bucket=1, pref_kw_count=1)
+    obi = make_candidate("Covers/obi.png", 4260, 3136, 39.9, bucket=3)
+    embedded = make_candidate("EMBEDDED", 500, 500, 0.4, bucket=1, pref_kw_count=1, src_type="embedded", is_embedded=True)
 
-    # Order: front first (likely gathered before embedded), then embedded appended last, matching observed behavior.
-    candidates = [front, embedded]
+    candidates = [
+        back,
+        book1,
+        book10,
+        book11,
+        book12,
+        book13,
+        book14,
+        book2,
+        book3,
+        book4,
+        book5,
+        book6,
+        book7,
+        book8,
+        book9,
+        cd1,
+        cd2,
+        front,
+        inlay_back,
+        inlay_front,
+        obi,
+        embedded,
+    ]
+
     best, _, _ = mw.select_best_cover(candidates, [], Path("dummy.flac"), Path("/"), Path("/album"))
 
-    # Expected: front should win due to vastly larger area when both are bucket 1 keyworded.
+    # Expected: front (bucket 1, keyworded, huge) should win over embedded bucket-1 cover.
     assert best is front
