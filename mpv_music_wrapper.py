@@ -750,18 +750,6 @@ def select_best_cover(
                 pick = True
             elif cand.scope_rank > best.scope_rank and allow_worse_scope and cand.area > best.area:
                 pick = True
-        elif cand.pref_kw_count == 0 and best.pref_kw_count == 0:
-            within = best.area == 0 or cand.area * 100 >= best.area * AREA_THRESHOLD_PCT
-            if cand.scope_rank < best.scope_rank and within:
-                pick = True
-            elif cand.scope_rank == best.scope_rank and cand.area > best.area:
-                pick = True
-            elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.size_bytes > best.size_bytes:
-                pick = True
-            elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.size_bytes == best.size_bytes and cand.name < best.name:
-                pick = True
-            elif cand.scope_rank > best.scope_rank and allow_worse_scope and cand.area > best.area:
-                pick = True
 
         if pick:
             best = cand
