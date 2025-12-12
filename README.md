@@ -122,3 +122,4 @@ You can bind these commands to global hotkeys in your desktop environment/window
   ```bash
   python run_tests.py
   ```
+- For integration checks with a real library, see the `--library` option in `run_tests.py`.
