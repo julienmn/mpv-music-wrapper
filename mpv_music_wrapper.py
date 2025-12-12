@@ -248,7 +248,7 @@ def load_recent_albums_cache(path: Path, planner: RandomPlanner) -> None:
     )
 
 
-def save_recent_albums_cache(path: Path, albums: deque[Path]) -> None:
+def save_recent_albums_cache(path: Path, albums: Sequence[Path]) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as fh:
@@ -1455,7 +1455,9 @@ def main(argv: Sequence[str]) -> None:
                 if next_to_prepare >= len(tracks):
                     rescan_performed = planner.maybe_refresh_album_map()
                     if rescan_performed and persist_recent_albums and cache_path:
-                        save_recent_albums_cache(cache_path, planner.recent_albums)
+                        played_count = max(0, current_pos + 1)
+                        to_save = list(planner.recent_albums)[-played_count:] if played_count else []
+                        save_recent_albums_cache(cache_path, to_save)
                     album_choice = choose_album_for_play(planner.albums, list(planner.recent_albums), planner.recent_albums_size)
                     if not album_choice:
                         break
@@ -1512,7 +1514,9 @@ def main(argv: Sequence[str]) -> None:
                 queue_more(total)
 
     if persist_recent_albums and cache_path and planner is not None:
-        save_recent_albums_cache(cache_path, planner.recent_albums)
+        played_count = max(0, current_pos + 1)
+        to_save = list(planner.recent_albums)[-played_count:] if played_count else []
+        save_recent_albums_cache(cache_path, to_save)
 
     shutil.rmtree(tmp_root, ignore_errors=True)
     try:
