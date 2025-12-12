@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections import deque
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -1292,7 +1293,7 @@ def main(argv: Sequence[str]) -> None:
     current_pos = -1
     last_cleaned = -1
     track_infos: Dict[int, TrackInfo] = {}
-    album_history: List[Path] = []
+    album_history: deque[Path] = deque(maxlen=album_history_size if album_spread_mode else 0)
     last_rescan = time.time()
 
     def choose_track_in_album(album: Path) -> Optional[Path]:
@@ -1310,7 +1311,7 @@ def main(argv: Sequence[str]) -> None:
         old_set = set(old_albums)
         old_track_count = total_track_count
         albums, album_track_files, album_track_count, total_track_count = build_album_map(Path(args.library))
-        album_history = [h for h in album_history if h in album_track_count]
+        album_history = deque([h for h in album_history if h in album_track_count], maxlen=album_history.maxlen)
         added = sum(1 for a in albums if a not in old_set)
         removed = sum(1 for a in old_albums if a not in set(album_track_count.keys()))
         delta = total_track_count - old_track_count
@@ -1334,8 +1335,6 @@ def main(argv: Sequence[str]) -> None:
                         break
                     tracks.append(track_choice)
                     album_history.append(album_choice)
-                    while len(album_history) > album_history_size and album_history_size > 0:
-                        album_history.pop(0)
                 src = tracks[next_to_prepare]
             else:
                 if next_to_prepare >= total_tracks:
