@@ -708,7 +708,7 @@ def select_best_cover(
                         pick = True
                     elif cand.has_non_front and not best.has_non_front and best.area < TINY_FRONT_AREA and cand.area * 100 >= best.area * (100 + (100 - AREA_THRESHOLD_PCT)):
                         pick = True
-                    elif cand.scope_rank < best.scope_rank:
+                    elif cand.scope_rank < best.scope_rank and cand.area * 100 >= best.area * AREA_THRESHOLD_PCT:
                         pick = True
                     elif cand.scope_rank == best.scope_rank and cand.area > best.area:
                         pick = True
