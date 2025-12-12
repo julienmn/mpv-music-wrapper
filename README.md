@@ -118,3 +118,7 @@ You can bind these commands to global hotkeys in your desktop environment/window
   pip install -r requirements-dev.txt
   pytest
   ```
+- Or use the helper (creates .venv if missing, installs dev deps, runs pytest):
+  ```bash
+  python run_tests.py
+  ```
