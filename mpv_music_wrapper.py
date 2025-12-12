@@ -55,9 +55,9 @@ IMAGE_EXTRACT_BIN = "ffmpeg"
 COVER_PREFERRED_FILE = "cover.png"
 AREA_THRESHOLD_PCT = 75
 ALBUM_SPREAD_THRESHOLD = 50
-ALBUM_HISTORY_MIN = 20
-ALBUM_HISTORY_MAX = 200
-ALBUM_HISTORY_PCT = 10
+RECENT_ALBUMS_MIN = 20
+RECENT_ALBUMS_MAX = 200
+RECENT_ALBUMS_PCT = 10
 RANDOM_RESCAN_INTERVAL = 3600
 BUFFER_AHEAD = 1
 POLL_INTERVAL = 5
@@ -133,8 +133,8 @@ class RandomPlanner:
     album_track_count: Dict[Path, int]
     total_track_count: int
     album_spread_mode: bool
-    album_history_size: int
-    album_history: deque[Path]
+    recent_albums_size: int
+    recent_albums: deque[Path]
     tracks: List[Path]
     last_rescan: float
 
@@ -142,8 +142,8 @@ class RandomPlanner:
     def from_library(cls, library: Path) -> "RandomPlanner":
         albums, album_track_files, album_track_count, total_track_count = build_album_map(library)
         album_spread_mode = len(albums) >= ALBUM_SPREAD_THRESHOLD
-        album_history_size = compute_album_history_size(len(albums)) if album_spread_mode else 0
-        album_history: deque[Path] = deque(maxlen=album_history_size)
+        recent_albums_size = compute_recent_albums_size(len(albums)) if album_spread_mode else 0
+        recent_albums: deque[Path] = deque(maxlen=recent_albums_size)
         tracks = gather_random_tracks(library, album_spread_mode, albums, album_track_files)
         return cls(
             library=library,
@@ -152,8 +152,8 @@ class RandomPlanner:
             album_track_count=album_track_count,
             total_track_count=total_track_count,
             album_spread_mode=album_spread_mode,
-            album_history_size=album_history_size,
-            album_history=album_history,
+            recent_albums_size=recent_albums_size,
+            recent_albums=recent_albums,
             tracks=tracks,
             last_rescan=time.time(),
         )
@@ -167,7 +167,7 @@ class RandomPlanner:
         old_track_count = self.total_track_count
 
         self.albums, self.album_track_files, self.album_track_count, self.total_track_count = build_album_map(self.library)
-        self.album_history = deque([h for h in self.album_history if h in self.album_track_count], maxlen=self.album_history.maxlen)
+        self.recent_albums = deque([h for h in self.recent_albums if h in self.album_track_count], maxlen=self.recent_albums.maxlen)
 
         added = sum(1 for a in self.albums if a not in old_set)
         removed = sum(1 for a in old_albums if a not in set(self.album_track_count.keys()))
@@ -190,23 +190,23 @@ class RandomPlanner:
 # Album spread helpers
 # ------------------------
 
-def compute_album_history_size(total_albums: int) -> int:
+def compute_recent_albums_size(total_albums: int) -> int:
     """
-    Compute the album history window size using the same rules as the main loop.
+    Compute the recent albums window size using the same rules as the main loop.
     """
-    size = max(ALBUM_HISTORY_MIN, min(ALBUM_HISTORY_MAX, max(1, total_albums * ALBUM_HISTORY_PCT // 100)))
+    size = max(RECENT_ALBUMS_MIN, min(RECENT_ALBUMS_MAX, max(1, total_albums * RECENT_ALBUMS_PCT // 100)))
     if size >= total_albums:
         size = max(0, total_albums - 1)
     return size
 
 
-def choose_album_for_play(albums_list: List[Path], history: List[Path], hist_size: int) -> Optional[Path]:
+def choose_album_for_play(albums_list: List[Path], recent_albums: List[Path], recent_size: int) -> Optional[Path]:
     """
-    Pick a random album, avoiding the last `hist_size` entries in history when possible.
+    Pick a random album, avoiding the last `recent_size` entries when possible.
     """
     if not albums_list:
         return None
-    blocked = set(history[-hist_size:]) if hist_size > 0 else set()
+    blocked = set(recent_albums[-recent_size:]) if recent_size > 0 else set()
     candidates = [a for a in albums_list if a not in blocked]
     if not candidates:
         candidates = list(albums_list)
@@ -1036,14 +1036,14 @@ def append_to_mpv(ipc: MpvIPC, file: Path, mode: str) -> None:
 # Playback helpers
 # --------------
 
-def print_header(mode: str, library: Optional[Path], album_dir: Optional[Path], playlist_file: Optional[Path], total: int, socket_path: str, normalize: bool, album_spread_mode: bool, album_count: int, album_history_size: int) -> None:
+def print_header(mode: str, library: Optional[Path], album_dir: Optional[Path], playlist_file: Optional[Path], total: int, socket_path: str, normalize: bool, album_spread_mode: bool, album_count: int, recent_albums_size: int) -> None:
     rescan_pretty = human_rescan_interval(RANDOM_RESCAN_INTERVAL)
     if mode == "random":
         mode_line = "🔀 Mode: random"
         path_line = f"💾 Library: {library}"
         random_album_line = f"💿 Albums: {album_count}"
         if album_spread_mode:
-            random_desc_line = f"🔁 I rotate albums, skip the last {album_history_size} of {album_count}, and look for new music every {rescan_pretty}."
+            random_desc_line = f"🔁 I rotate albums, skip the last {recent_albums_size} of {album_count}, and look for new music every {rescan_pretty}."
         else:
             random_desc_line = f"🎲 Single big shuffle (library has < {ALBUM_SPREAD_THRESHOLD} albums)."
     elif mode == "album":
@@ -1348,17 +1348,17 @@ def main(argv: Sequence[str]) -> None:
         planner = RandomPlanner.from_library(Path(args.library))
         tracks = planner.tracks
         album_spread_mode = planner.album_spread_mode
-        album_history_size = planner.album_history_size
+        recent_albums_size = planner.recent_albums_size
         total = planner.total_track_count if album_spread_mode else len(tracks)
     elif args.mode == "album":
         tracks = gather_album_tracks(Path(args.album_dir))
         album_spread_mode = False
-        album_history_size = 0
+        recent_albums_size = 0
         total = len(tracks)
     else:
         tracks = gather_playlist_tracks(Path(args.playlist_file))
         album_spread_mode = False
-        album_history_size = 0
+        recent_albums_size = 0
         total = len(tracks)
 
     print_header(
@@ -1371,7 +1371,7 @@ def main(argv: Sequence[str]) -> None:
         normalize=args.normalize,
         album_spread_mode=album_spread_mode,
         album_count=len(planner.albums) if planner else 0,
-        album_history_size=album_history_size,
+        recent_albums_size=recent_albums_size,
     )
 
     next_to_prepare = 0
@@ -1389,14 +1389,14 @@ def main(argv: Sequence[str]) -> None:
                 assert planner is not None
                 if next_to_prepare >= len(tracks):
                     planner.maybe_refresh_album_map()
-                    album_choice = choose_album_for_play(planner.albums, list(planner.album_history), planner.album_history_size)
+                    album_choice = choose_album_for_play(planner.albums, list(planner.recent_albums), planner.recent_albums_size)
                     if not album_choice:
                         break
                     track_choice = planner.choose_track_in_album(album_choice)
                     if not track_choice:
                         break
                     tracks.append(track_choice)
-                    planner.album_history.append(album_choice)
+                    planner.recent_albums.append(album_choice)
                 src = tracks[next_to_prepare]
             else:
                 if next_to_prepare >= total_tracks:
