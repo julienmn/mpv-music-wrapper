@@ -174,6 +174,8 @@ class RandomPlanner:
         removed = sum(1 for a in old_albums if a not in set(self.album_track_count.keys()))
         delta = self.total_track_count - old_track_count
         if added or removed or delta != 0:
+            # mpv status lines can stay on the same terminal line; emit a blank line for readability.
+            print(file=sys.stderr)
             log_info(
                 f"random rescan: albums={len(self.albums)} (added {added}, removed {removed}) "
                 f"tracks={self.total_track_count} (delta {delta})"
