@@ -1444,6 +1444,7 @@ def main(argv: Sequence[str]) -> None:
     current_pos = -1
     last_cleaned = -1
     track_infos: Dict[int, TrackInfo] = {}
+    album_by_index: Dict[int, Path] = {}
 
     def queue_more(total_tracks: int) -> bool:
         nonlocal next_to_prepare, highest_appended, tracks
@@ -1464,8 +1465,8 @@ def main(argv: Sequence[str]) -> None:
                     track_choice = planner.choose_track_in_album(album_choice)
                     if not track_choice:
                         break
+                    album_by_index[next_to_prepare] = album_choice
                     tracks.append(track_choice)
-                    planner.recent_albums.append(album_choice)
                 src = tracks[next_to_prepare]
             else:
                 if next_to_prepare >= total_tracks:
@@ -1504,6 +1505,8 @@ def main(argv: Sequence[str]) -> None:
                     continue
 
         if pos != current_pos:
+            if album_spread_mode and pos in album_by_index:
+                planner.recent_albums.append(album_by_index[pos])
             last_cleaned = clean_finished(pos, last_cleaned, tmp_root)
             current_pos = pos
             print_rg_for_pos(pos, tracks, track_infos, ipc, display_root)
