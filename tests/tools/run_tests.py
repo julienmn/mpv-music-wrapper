@@ -20,9 +20,10 @@ import sys
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parent
+# repo root (tests/tools/run_tests.py -> tools -> tests -> repo)
+REPO_ROOT = Path(__file__).resolve().parents[2]
 VENV_DIR = REPO_ROOT / ".venv"
-REQS = REPO_ROOT / "requirements-dev.txt"
+REQS = REPO_ROOT / "tests" / "requirements-dev.txt"
 
 
 def venv_python() -> Path:
