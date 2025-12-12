@@ -58,7 +58,7 @@ def run_integration(py: Path, library: Path) -> int:
         return 1
     env = os.environ.copy()
     env["MPV_MUSIC_LIBRARY"] = str(library)
-    cmd = [str(py), "-m", "pytest", "tests/integration"]
+    cmd = [str(py), "-m", "pytest", "-s", "tests/integration"]
     print(f"[info] running integration tests via: {' '.join(cmd)} (MPV_MUSIC_LIBRARY={library})")
     return subprocess.call(cmd, env=env)
 
