@@ -6,12 +6,14 @@ Behavior:
 - Creates .venv if missing.
 - Installs dev requirements from requirements-dev.txt into .venv.
 - Runs pytest using the venv's Python.
+- Optional: with --library /path/to/music, runs integration tests (album-spread) against that library.
 
 This is optional; runtime usage of the player does not require the venv.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -45,16 +47,38 @@ def install_deps(py: Path) -> None:
 
 
 def run_pytest(py: Path) -> int:
-    cmd = [str(py), "-m", "pytest"]
+    cmd = [str(py), "-m", "pytest", "tests/unit"]
     print(f"[info] running pytest via: {' '.join(cmd)}")
     return subprocess.call(cmd)
 
 
+def run_integration(py: Path, library: Path) -> int:
+    if not library.is_dir():
+        print(f"[error] library path not found: {library}")
+        return 1
+    env = os.environ.copy()
+    env["MPV_MUSIC_LIBRARY"] = str(library)
+    cmd = [str(py), "-m", "pytest", "tests/integration"]
+    print(f"[info] running integration tests via: {' '.join(cmd)} (MPV_MUSIC_LIBRARY={library})")
+    return subprocess.call(cmd, env=env)
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run tests for mpv-music-wrapper")
+    parser.add_argument("--library", type=Path, help="Optional library path to validate album-spread history avoidance")
+    return parser.parse_args(argv)
+
+
 def main() -> int:
+    args = parse_args(sys.argv[1:])
     ensure_venv()
     py = venv_python()
     install_deps(py)
-    return run_pytest(py)
+    rc = run_pytest(py)
+    if args.library:
+        rc_integration = run_integration(py, args.library)
+        rc = rc or rc_integration
+    return rc
 
 
 if __name__ == "__main__":
