@@ -123,6 +123,33 @@ class TrackInfo:
     cover_detail: str
 
 
+# ------------------------
+# Album spread helpers
+# ------------------------
+
+def compute_album_history_size(total_albums: int) -> int:
+    """
+    Compute the album history window size using the same rules as the main loop.
+    """
+    size = max(ALBUM_HISTORY_MIN, min(ALBUM_HISTORY_MAX, max(1, total_albums * ALBUM_HISTORY_PCT // 100)))
+    if size >= total_albums:
+        size = max(0, total_albums - 1)
+    return size
+
+
+def choose_album_for_play(albums_list: List[Path], history: List[Path], hist_size: int) -> Optional[Path]:
+    """
+    Pick a random album, avoiding the last `hist_size` entries in history when possible.
+    """
+    if not albums_list:
+        return None
+    blocked = set(history[-hist_size:]) if hist_size > 0 else set()
+    candidates = [a for a in albums_list if a not in blocked]
+    if not candidates:
+        candidates = list(albums_list)
+    return random.choice(candidates)
+
+
 # ----------------
 # Utility functions
 # ----------------
@@ -1231,9 +1258,7 @@ def main(argv: Sequence[str]) -> None:
         albums, album_track_files, album_track_count, total_track_count = build_album_map(library)
         album_spread_mode = len(albums) >= ALBUM_SPREAD_THRESHOLD
         if album_spread_mode:
-            album_history_size = max(ALBUM_HISTORY_MIN, min(ALBUM_HISTORY_MAX, max(1, len(albums) * ALBUM_HISTORY_PCT // 100)))
-            if album_history_size >= len(albums):
-                album_history_size = len(albums) - 1
+            album_history_size = compute_album_history_size(len(albums))
         else:
             album_history_size = 0
         tracks = gather_random_tracks(library, album_spread_mode, albums, album_track_files)
@@ -1269,15 +1294,6 @@ def main(argv: Sequence[str]) -> None:
     track_infos: Dict[int, TrackInfo] = {}
     album_history: List[Path] = []
     last_rescan = time.time()
-
-    def choose_album_for_play(albums_list: List[Path], history: List[Path], hist_size: int) -> Optional[Path]:
-        if not albums_list:
-            return None
-        blocked = set(history[-hist_size:]) if hist_size > 0 else set()
-        candidates = [a for a in albums_list if a not in blocked]
-        if not candidates:
-            candidates = list(albums_list)
-        return random.choice(candidates)
 
     def choose_track_in_album(album: Path) -> Optional[Path]:
         lst = album_track_files.get(album, [])
