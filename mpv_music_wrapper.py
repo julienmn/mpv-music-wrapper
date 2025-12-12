@@ -112,6 +112,7 @@ class CoverCandidate:
     name: str
     album_tokens: List[str]
     rel_display: str
+    is_embedded: bool = False
 
 
 @dataclasses.dataclass
@@ -551,22 +552,22 @@ def gather_image_candidates(dir_path: Path, album_root: Optional[Path], is_multi
     return out, embedded
 
 
-def select_cover_for_track(track: Path, dst_dir: Path, audio_copy: Path, album_root: Optional[Path], display_root: Path) -> Tuple[Optional[Path], str, str]:
-    dir_path = track.parent
-    is_multi = False
-    if album_root and dir_path != album_root and str(dir_path).startswith(str(album_root)):
-        is_multi = True
-
+def analyze_candidates(
+    candidates_paths: List[Path],
+    embedded_path: Optional[Path],
+    track: Path,
+    album_root: Optional[Path],
+    dir_path: Path,
+    base_root: Path,
+    display_root: Path,
+) -> Tuple[List[CoverCandidate], List[str]]:
     if album_root and album_root == dir_path.parent:
         album_token = dir_path.name
     else:
         album_token = album_root.name if album_root else dir_path.name
     album_tokens = clean_album_tokens(album_token)
-    base_root = album_root if album_root else dir_path
 
-    candidates_paths, embedded_path = gather_image_candidates(dir_path, album_root, is_multi, track, dst_dir)
-
-    best: Optional[CoverCandidate] = None
+    candidates_meta: List[CoverCandidate] = []
     detail_lines: List[str] = []
 
     for f in candidates_paths:
@@ -610,11 +611,13 @@ def select_cover_for_track(track: Path, dst_dir: Path, audio_copy: Path, album_r
         scope_rank = 2
         src_type = "external"
         disp_path = display_path(f, display_root)
-        if str(f) == str(dst_dir / "embedded-cover.png"):
+        is_embedded = False
+        if embedded_path and str(f) == str(embedded_path):
             scope = "embedded"
             scope_rank = 0
             src_type = "embedded"
             disp_path = f"(embedded from {display_path(track, display_root)})"
+            is_embedded = True
         else:
             if album_root and str(f).startswith(str(album_root)):
                 scope = "album-root"
@@ -653,8 +656,23 @@ def select_cover_for_track(track: Path, dst_dir: Path, audio_copy: Path, album_r
             name=f.name,
             album_tokens=album_tokens,
             rel_display=rel_path,
+            is_embedded=is_embedded,
         )
+        candidates_meta.append(cand)
 
+    return candidates_meta, detail_lines
+
+
+def select_best_cover(
+    candidates: List[CoverCandidate],
+    detail_lines: List[str],
+    track: Path,
+    display_root: Path,
+    base_root: Optional[Path],
+) -> Tuple[Optional[CoverCandidate], str, str]:
+    best: Optional[CoverCandidate] = None
+
+    for cand in candidates:
         if best is None:
             best = cand
             continue
@@ -690,7 +708,7 @@ def select_cover_for_track(track: Path, dst_dir: Path, audio_copy: Path, album_r
                         pick = True
                     elif cand.has_non_front and not best.has_non_front and best.area < TINY_FRONT_AREA and cand.area * 100 >= best.area * (100 + (100 - AREA_THRESHOLD_PCT)):
                         pick = True
-                    elif cand.scope_rank < best.scope_rank:
+                    elif cand.scope_rank < best.scope_rank and cand.area * 100 >= best.area * AREA_THRESHOLD_PCT:
                         pick = True
                     elif cand.scope_rank == best.scope_rank and cand.area > best.area:
                         pick = True
@@ -732,28 +750,14 @@ def select_cover_for_track(track: Path, dst_dir: Path, audio_copy: Path, album_r
                 pick = True
             elif cand.scope_rank > best.scope_rank and allow_worse_scope and cand.area > best.area:
                 pick = True
-        elif cand.pref_kw_count == 0 and best.pref_kw_count == 0:
-            within = best.area == 0 or cand.area * 100 >= best.area * AREA_THRESHOLD_PCT
-            if cand.scope_rank < best.scope_rank and within:
-                pick = True
-            elif cand.scope_rank == best.scope_rank and cand.area > best.area:
-                pick = True
-            elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.size_bytes > best.size_bytes:
-                pick = True
-            elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.size_bytes == best.size_bytes and cand.name < best.name:
-                pick = True
-            elif cand.scope_rank > best.scope_rank and allow_worse_scope and cand.area > best.area:
-                pick = True
 
         if pick:
             best = cand
 
-    cover_best: Optional[Path] = None
     cover_meta = ""
     cover_detail = "[ ] no images found"
 
     if best:
-        cover_best = best.path
         cover_meta = f"{best.src_type}|{best.width}|{best.height}|{best.area}|{best.pref_kw_count + best.name_token_score}|{best.size_bytes}"
         formatted: List[str] = []
         for line in detail_lines:
@@ -763,7 +767,30 @@ def select_cover_for_track(track: Path, dst_dir: Path, audio_copy: Path, album_r
                 formatted.append(f"[ ] {line}")
         cover_detail = "\n".join(formatted) if formatted else "[ ] no images found"
 
-    if embedded_path and best and embedded_path != best.path:
+    return best, cover_meta, cover_detail
+
+
+def select_cover_for_track(track: Path, dst_dir: Path, audio_copy: Path, album_root: Optional[Path], display_root: Path) -> Tuple[Optional[Path], str, str]:
+    dir_path = track.parent
+    is_multi = False
+    if album_root and dir_path != album_root and str(dir_path).startswith(str(album_root)):
+        is_multi = True
+
+    base_root = album_root if album_root else dir_path
+    candidates_paths, embedded_path = gather_image_candidates(dir_path, album_root, is_multi, track, dst_dir)
+    candidates_meta, detail_lines = analyze_candidates(
+        candidates_paths,
+        embedded_path,
+        track,
+        album_root,
+        dir_path,
+        base_root,
+        display_root,
+    )
+
+    best, cover_meta, cover_detail = select_best_cover(candidates_meta, detail_lines, track, display_root, base_root)
+
+    if embedded_path and best and embedded_path != best.path and embedded_path.exists():
         try:
             embedded_path.unlink()
         except OSError:
@@ -779,7 +806,8 @@ def select_cover_for_track(track: Path, dst_dir: Path, audio_copy: Path, album_r
             print("  (none)", file=sys.stderr)
         print(f"[ARTDBG] chosen: {best.src_type if best else 'none'} {display_path(best.path if best else Path(''), display_root)}", file=sys.stderr)
 
-    return cover_best, cover_meta, cover_detail
+    cover_path = best.path if best else None
+    return cover_path, cover_meta, cover_detail
 
 
 def link_cover(cover: Path, dst_dir: Path) -> None:
