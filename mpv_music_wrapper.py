@@ -124,6 +124,67 @@ class TrackInfo:
     cover_detail: str
 
 
+@dataclasses.dataclass
+class RandomPlanner:
+    library: Path
+    albums: List[Path]
+    album_track_files: Dict[Path, List[Path]]
+    album_track_count: Dict[Path, int]
+    total_track_count: int
+    album_spread_mode: bool
+    album_history_size: int
+    album_history: deque[Path]
+    tracks: List[Path]
+    last_rescan: float
+
+    @classmethod
+    def from_library(cls, library: Path) -> "RandomPlanner":
+        albums, album_track_files, album_track_count, total_track_count = build_album_map(library)
+        album_spread_mode = len(albums) >= ALBUM_SPREAD_THRESHOLD
+        album_history_size = compute_album_history_size(len(albums)) if album_spread_mode else 0
+        album_history: deque[Path] = deque(maxlen=album_history_size)
+        tracks = gather_random_tracks(library, album_spread_mode, albums, album_track_files)
+        return cls(
+            library=library,
+            albums=albums,
+            album_track_files=album_track_files,
+            album_track_count=album_track_count,
+            total_track_count=total_track_count,
+            album_spread_mode=album_spread_mode,
+            album_history_size=album_history_size,
+            album_history=album_history,
+            tracks=tracks,
+            last_rescan=time.time(),
+        )
+
+    def maybe_refresh_album_map(self) -> None:
+        now = time.time()
+        if now - self.last_rescan < RANDOM_RESCAN_INTERVAL:
+            return
+        old_albums = list(self.albums)
+        old_set = set(old_albums)
+        old_track_count = self.total_track_count
+
+        self.albums, self.album_track_files, self.album_track_count, self.total_track_count = build_album_map(self.library)
+        self.album_history = deque([h for h in self.album_history if h in self.album_track_count], maxlen=self.album_history.maxlen)
+
+        added = sum(1 for a in self.albums if a not in old_set)
+        removed = sum(1 for a in old_albums if a not in set(self.album_track_count.keys()))
+        delta = self.total_track_count - old_track_count
+        if added or removed or delta != 0:
+            log_info(
+                f"random rescan: albums={len(self.albums)} (added {added}, removed {removed}) "
+                f"tracks={self.total_track_count} (delta {delta})"
+            )
+        self.last_rescan = now
+
+    def choose_track_in_album(self, album: Path) -> Optional[Path]:
+        lst = self.album_track_files.get(album, [])
+        if not lst:
+            return None
+        return random.choice(lst)
+
+
 # ------------------------
 # Album spread helpers
 # ------------------------
@@ -1254,16 +1315,13 @@ def main(argv: Sequence[str]) -> None:
     # clear playlist
     ipc.send({"command": ["playlist-clear"]})
 
+    planner: Optional[RandomPlanner] = None
     if args.mode == "random":
-        library = Path(args.library)
-        albums, album_track_files, album_track_count, total_track_count = build_album_map(library)
-        album_spread_mode = len(albums) >= ALBUM_SPREAD_THRESHOLD
-        if album_spread_mode:
-            album_history_size = compute_album_history_size(len(albums))
-        else:
-            album_history_size = 0
-        tracks = gather_random_tracks(library, album_spread_mode, albums, album_track_files)
-        total = total_track_count if album_spread_mode else len(tracks)
+        planner = RandomPlanner.from_library(Path(args.library))
+        tracks = planner.tracks
+        album_spread_mode = planner.album_spread_mode
+        album_history_size = planner.album_history_size
+        total = planner.total_track_count if album_spread_mode else len(tracks)
     elif args.mode == "album":
         tracks = gather_album_tracks(Path(args.album_dir))
         album_spread_mode = False
@@ -1284,7 +1342,7 @@ def main(argv: Sequence[str]) -> None:
         socket_path=ipc_path,
         normalize=args.normalize,
         album_spread_mode=album_spread_mode,
-        album_count=len(albums) if args.mode == "random" else 0,
+        album_count=len(planner.albums) if planner else 0,
         album_history_size=album_history_size,
     )
 
@@ -1293,48 +1351,24 @@ def main(argv: Sequence[str]) -> None:
     current_pos = -1
     last_cleaned = -1
     track_infos: Dict[int, TrackInfo] = {}
-    album_history: deque[Path] = deque(maxlen=album_history_size if album_spread_mode else 0)
-    last_rescan = time.time()
-
-    def choose_track_in_album(album: Path) -> Optional[Path]:
-        lst = album_track_files.get(album, [])
-        if not lst:
-            return None
-        return random.choice(lst)
-
-    def maybe_refresh_album_map():
-        nonlocal albums, album_track_files, album_track_count, total_track_count, last_rescan, album_history
-        now = time.time()
-        if now - last_rescan < RANDOM_RESCAN_INTERVAL:
-            return
-        old_albums = list(albums)
-        old_set = set(old_albums)
-        old_track_count = total_track_count
-        albums, album_track_files, album_track_count, total_track_count = build_album_map(Path(args.library))
-        album_history = deque([h for h in album_history if h in album_track_count], maxlen=album_history.maxlen)
-        added = sum(1 for a in albums if a not in old_set)
-        removed = sum(1 for a in old_albums if a not in set(album_track_count.keys()))
-        delta = total_track_count - old_track_count
-        if added or removed or delta != 0:
-            log_info(f"random rescan: albums={len(albums)} (added {added}, removed {removed}) tracks={total_track_count} (delta {delta})")
-        last_rescan = now
 
     def queue_more(total_tracks: int) -> bool:
-        nonlocal next_to_prepare, highest_appended, tracks, album_history
+        nonlocal next_to_prepare, highest_appended, tracks
         appended = False
         target = current_pos + BUFFER_AHEAD
         while highest_appended < target:
             if album_spread_mode:
+                assert planner is not None
                 if next_to_prepare >= len(tracks):
-                    maybe_refresh_album_map()
-                    album_choice = choose_album_for_play(albums, album_history, album_history_size)
+                    planner.maybe_refresh_album_map()
+                    album_choice = choose_album_for_play(planner.albums, list(planner.album_history), planner.album_history_size)
                     if not album_choice:
                         break
-                    track_choice = choose_track_in_album(album_choice)
+                    track_choice = planner.choose_track_in_album(album_choice)
                     if not track_choice:
                         break
                     tracks.append(track_choice)
-                    album_history.append(album_choice)
+                    planner.album_history.append(album_choice)
                 src = tracks[next_to_prepare]
             else:
                 if next_to_prepare >= total_tracks:
