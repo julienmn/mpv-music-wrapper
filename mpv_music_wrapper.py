@@ -58,6 +58,7 @@ ALBUM_SPREAD_THRESHOLD = 50
 RECENT_ALBUMS_MIN = 20
 RECENT_ALBUMS_MAX = 200
 RECENT_ALBUMS_PCT = 10
+RECENT_ALBUMS_CACHE_PATH_OVERRIDE: Optional[str] = None  # Set to override platform default cache path; leave None for auto
 RANDOM_RESCAN_INTERVAL = 3600
 BUFFER_AHEAD = 1
 POLL_INTERVAL = 5
@@ -158,10 +159,10 @@ class RandomPlanner:
             last_rescan=time.time(),
         )
 
-    def maybe_refresh_album_map(self) -> None:
+    def maybe_refresh_album_map(self) -> bool:
         now = time.time()
         if now - self.last_rescan < RANDOM_RESCAN_INTERVAL:
-            return
+            return False
         old_albums = list(self.albums)
         old_set = set(old_albums)
         old_track_count = self.total_track_count
@@ -178,6 +179,7 @@ class RandomPlanner:
                 f"tracks={self.total_track_count} (delta {delta})"
             )
         self.last_rescan = now
+        return True
 
     def choose_track_in_album(self, album: Path) -> Optional[Path]:
         lst = self.album_track_files.get(album, [])
@@ -198,6 +200,62 @@ def compute_recent_albums_size(total_albums: int) -> int:
     if size >= total_albums:
         size = max(0, total_albums - 1)
     return size
+
+
+# -------------------------------
+# Recent albums persistence (opt-in)
+# -------------------------------
+
+def default_recent_albums_cache_path() -> Path:
+    system = platform.system().lower()
+    if system == "windows":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    elif system == "darwin":
+        base = Path.home() / "Library" / "Caches"
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return base / "mpv-music-wrapper" / "recent_albums.json"
+
+
+def resolve_recent_albums_cache_path() -> Path:
+    if RECENT_ALBUMS_CACHE_PATH_OVERRIDE:
+        return Path(RECENT_ALBUMS_CACHE_PATH_OVERRIDE).expanduser()
+    return default_recent_albums_cache_path()
+
+
+def load_recent_albums_cache(path: Path, planner: RandomPlanner) -> None:
+    if not path.is_file():
+        log_info(f"recent albums persistence: cache not found at {path} (will create on exit)")
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log_warn(f"recent albums persistence: failed to read {path}: {exc}")
+        return
+
+    loaded = [Path(p) for p in data if isinstance(p, str)]
+    found = len(loaded)
+    existing = [p for p in loaded if p in planner.album_track_count]
+    kept_existing = len(existing)
+    trimmed = existing[-planner.recent_albums_size :] if planner.recent_albums_size > 0 else []
+    planner.recent_albums.extend(trimmed)
+
+    dropped_missing = found - kept_existing
+    trimmed_off = kept_existing - len(trimmed)
+    log_info(
+        f"recent albums persistence: load path={path} found={found} kept={len(trimmed)} "
+        f"dropped_missing={dropped_missing} trimmed_to_window={trimmed_off}"
+    )
+
+
+def save_recent_albums_cache(path: Path, albums: Sequence[Path]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump([str(p) for p in albums], fh, indent=2)
+        log_info(f"recent albums persistence: saved {len(albums)} entries to {path}")
+    except OSError as exc:
+        log_warn(f"recent albums persistence: failed to write {path}: {exc}")
 
 
 def choose_album_for_play(albums_list: List[Path], recent_albums: List[Path], recent_size: int) -> Optional[Path]:
@@ -326,6 +384,7 @@ def usage_text() -> str:
         "                               copy to RAM, strip RG tags when possible, and link album art,\n"
         "                               but do NOT compute RG or pass --replaygain to mpv.\n"
         "  --mpv-additional-args <str>  Extra args for mpv (string, split like a shell).\n"
+        "  --persist-recent-albums      Save/load recent album picks between runs (JSON cache, optional).\n"
         "  -h, --help                   Show this help.\n\n"
         "Examples:\n"
         "  mpv_music_wrapper.sh --random-mode=full-library --library /music --normalize\n"
@@ -342,6 +401,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--library")
     parser.add_argument("--normalize", action="store_true")
     parser.add_argument("--mpv-additional-args")
+    parser.add_argument("--persist-recent-albums", action="store_true")
     parser.add_argument("-h", "--help", action="store_true")
 
     known, unknown = parser.parse_known_args(argv)
@@ -415,6 +475,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         library=library,
         normalize=known.normalize,
         mpv_additional_args=mpv_additional_args,
+        persist_recent_albums=known.persist_recent_albums,
     )
 
 
@@ -1314,6 +1375,8 @@ def clean_finished(upto: int, last_cleaned: int, tmp_root: Path) -> int:
 
 def main(argv: Sequence[str]) -> None:
     args = parse_args(argv)
+    persist_recent_albums = args.persist_recent_albums
+    cache_path = resolve_recent_albums_cache_path() if persist_recent_albums else None
 
     check_dependencies(args.normalize)
 
@@ -1346,6 +1409,8 @@ def main(argv: Sequence[str]) -> None:
     planner: Optional[RandomPlanner] = None
     if args.mode == "random":
         planner = RandomPlanner.from_library(Path(args.library))
+        if persist_recent_albums and cache_path:
+            load_recent_albums_cache(cache_path, planner)
         tracks = planner.tracks
         album_spread_mode = planner.album_spread_mode
         recent_albums_size = planner.recent_albums_size
@@ -1379,6 +1444,7 @@ def main(argv: Sequence[str]) -> None:
     current_pos = -1
     last_cleaned = -1
     track_infos: Dict[int, TrackInfo] = {}
+    album_by_index: Dict[int, Path] = {}
 
     def queue_more(total_tracks: int) -> bool:
         nonlocal next_to_prepare, highest_appended, tracks
@@ -1388,15 +1454,17 @@ def main(argv: Sequence[str]) -> None:
             if album_spread_mode:
                 assert planner is not None
                 if next_to_prepare >= len(tracks):
-                    planner.maybe_refresh_album_map()
+                    rescan_performed = planner.maybe_refresh_album_map()
+                    if rescan_performed and persist_recent_albums and cache_path:
+                        save_recent_albums_cache(cache_path, planner.recent_albums)
                     album_choice = choose_album_for_play(planner.albums, list(planner.recent_albums), planner.recent_albums_size)
                     if not album_choice:
                         break
                     track_choice = planner.choose_track_in_album(album_choice)
                     if not track_choice:
                         break
+                    album_by_index[next_to_prepare] = album_choice
                     tracks.append(track_choice)
-                    planner.recent_albums.append(album_choice)
                 src = tracks[next_to_prepare]
             else:
                 if next_to_prepare >= total_tracks:
@@ -1435,6 +1503,8 @@ def main(argv: Sequence[str]) -> None:
                     continue
 
         if pos != current_pos:
+            if album_spread_mode and pos in album_by_index:
+                planner.recent_albums.append(album_by_index[pos])
             last_cleaned = clean_finished(pos, last_cleaned, tmp_root)
             current_pos = pos
             print_rg_for_pos(pos, tracks, track_infos, ipc, display_root)
@@ -1443,6 +1513,9 @@ def main(argv: Sequence[str]) -> None:
                     break
             else:
                 queue_more(total)
+
+    if persist_recent_albums and cache_path and planner is not None:
+        save_recent_albums_cache(cache_path, planner.recent_albums)
 
     shutil.rmtree(tmp_root, ignore_errors=True)
     try:
