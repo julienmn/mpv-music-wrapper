@@ -1,6 +1,6 @@
 # mpv music wrapper
 
-CLI music player (mpv wrapper) that plays directly from your library with optional on-the-fly per-track ReplayGain (no pre-scan or duplicate ReplayGain library), smart cover-art handling (scans folder/subfolders + embedded, picks best by keyword/resolution), RAM staging (keeps your disks/library untouched), and mpv IPC control (pause/skip/status from other tools). Supports random library shuffle, whole-album playback, and playlist playback from common playlist formats. **The wrapper is now implemented in Python** for portability and fewer dependencies (originally Bash).
+CLI music player (mpv wrapper) that plays directly from your library with optional on-the-fly per-track ReplayGain (no pre-scan or duplicate ReplayGain library), smart cover-art handling (scans folder/subfolders + embedded, picks best by keyword/resolution), RAM staging (keeps your disks/library untouched), and mpv IPC control (pause/skip/status from other tools). Supports random library shuffle, whole-album playback, and playlist playback from common playlist formats. **The wrapper is now implemented in Python** for portability and fewer dependencies (originally Bash). Repo: [github.com/julienmn/mpv-music-wrapper](https://github.com/julienmn/mpv-music-wrapper)
 
 <img src="2025-12-03_13-12.jpg" alt="Screenshot" width="60%" />
 
