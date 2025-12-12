@@ -8,16 +8,24 @@
   <style>
     body { font-family: sans-serif; margin: 2rem auto; max-width: 900px; line-height: 1.6; padding: 0 1rem; }
     pre { white-space: pre-wrap; }
+    img { max-width: 100%; height: auto; }
   </style>
 </head>
 <body>
   <main id="content">Loading README...</main>
   <script>
     const README_URL = "https://raw.githubusercontent.com/julienmn/mpv-music-wrapper/main/README.md";
+    // Adjust image src in README to use raw GitHub host so the screenshot loads on Pages.
+    const MAIN_RAW = "https://raw.githubusercontent.com/julienmn/mpv-music-wrapper/main/";
     fetch(README_URL)
       .then((res) => res.text())
       .then((md) => {
-        document.getElementById("content").innerHTML = marked.parse(md);
+        const html = marked.parse(md);
+        const fixed = html.replace(/<img src="(.*?)"/g, (m, p1) => {
+          if (p1.startsWith("http://") || p1.startsWith("https://")) return m;
+          return `<img src="${MAIN_RAW}${p1}"`;
+        });
+        document.getElementById("content").innerHTML = fixed;
       })
       .catch((err) => {
         document.getElementById("content").textContent = "Failed to load README: " + err;
