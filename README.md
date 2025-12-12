@@ -110,4 +110,4 @@ You can bind these commands to global hotkeys in your desktop environment/window
 - Set `ART_DEBUG=1` to print detailed art candidate selection, stored cover meta, and track separators.
 
 ## Development and tests
-See `tests/DEV.md` for dev/test setup (pytest, helper scripts). Runtime usage doesn’t require any of that.
+See [tests/DEV.md](tests/DEV.md) for dev/test setup (pytest, helper scripts). Runtime usage doesn’t require any of that.
