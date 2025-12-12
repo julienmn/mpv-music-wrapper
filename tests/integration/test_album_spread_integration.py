@@ -25,6 +25,8 @@ def test_album_spread_history_avoidance():
     random.seed(0)
     picks = max(1, 3 * len(planner.albums))
 
+    print(f"[integration] albums={len(planner.albums)} hist_size={planner.album_history_size} picks={picks}")
+
     for _ in range(picks):
         planner.maybe_refresh_album_map()
         pick = mw.choose_album_for_play(planner.albums, list(planner.album_history), planner.album_history_size)
