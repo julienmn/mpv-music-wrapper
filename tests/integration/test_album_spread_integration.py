@@ -1,6 +1,6 @@
 import os
+import os
 import random
-from collections import deque
 from pathlib import Path
 
 import pytest
@@ -16,25 +16,23 @@ def test_album_spread_history_avoidance():
     library = Path(os.environ[LIB_ENV])
     assert library.is_dir(), f"Library path not found: {library}"
 
-    albums, album_track_files, album_track_count, total_track_count = mw.build_album_map(library)
-    assert albums, "No albums found under library"
+    planner = mw.RandomPlanner.from_library(library)
+    assert planner.albums, "No albums found under library"
 
-    if len(albums) < mw.ALBUM_SPREAD_THRESHOLD:
+    if not planner.album_spread_mode:
         pytest.skip(f"Library has < {mw.ALBUM_SPREAD_THRESHOLD} albums; album-spread disabled")
 
-    hist_size = mw.compute_album_history_size(len(albums))
-    history: deque[Path] = deque(maxlen=hist_size)
-
     random.seed(0)
-    picks = max(1, 3 * len(albums))
+    picks = max(1, 3 * len(planner.albums))
 
     for _ in range(picks):
-        pick = mw.choose_album_for_play(albums, list(history), hist_size)
-        assert pick in albums
+        planner.maybe_refresh_album_map()
+        pick = mw.choose_album_for_play(planner.albums, list(planner.album_history), planner.album_history_size)
+        assert pick in planner.albums
 
-        blocked = set(list(history)[-hist_size:]) if hist_size > 0 else set()
-        if hist_size > 0 and len(blocked) < len(albums):
+        blocked = set(list(planner.album_history)[-planner.album_history_size:]) if planner.album_history_size > 0 else set()
+        if planner.album_history_size > 0 and len(blocked) < len(planner.albums):
             # When not all albums are blocked, we should avoid recently played ones.
             assert pick not in blocked
 
-        history.append(pick)
+        planner.album_history.append(pick)
