@@ -66,7 +66,7 @@ def run_integration(py: Path, library: Path) -> int:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run tests for mpv-music-wrapper")
-    parser.add_argument("--library", type=Path, help="Optional library path to validate album-spread history avoidance")
+    parser.add_argument("--library", type=Path, help="Optional library path to validate album-spread recent-album avoidance")
     return parser.parse_args(argv)
 
 

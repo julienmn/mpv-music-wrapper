@@ -76,10 +76,10 @@ play_album /path/to/album
 
 ## Random algorithm
 - Current random mode is `full-library`. Libraries with <50 albums shuffle all tracks once (uniform, no replacement).
-- Libraries with ≥50 albums use album-spread: build an album → tracks map, pick a random album not seen in the recent history window, then a random track from that album. The history size is ~10% of album count, clamped to 20–200 and never reaching the full album count.
-- Recently played albums are avoided until they age out of the history window; playback continues indefinitely with albums rotating back in after they fall out of history.
-- The library is fully rescanned every hour and the album/track pool is rebuilt (recent-album history is kept, entries for deleted albums are dropped). Newly added albums can start playing without restarting the script.
-- Tunables live near the top of `mpv_music_wrapper.py` (e.g., album thresholds, history percent/min/max, rescan interval).
+- Libraries with ≥50 albums use album-spread: build an album → tracks map, pick a random album not seen in the recent albums window, then a random track from that album. The recent-albums window is ~10% of album count, clamped to 20–200 and never reaching the full album count.
+- Recently played albums are avoided until they age out of the recent-albums window; playback continues indefinitely with albums rotating back in after they fall out of the window.
+- The library is fully rescanned every hour and the album/track pool is rebuilt (recent albums list is kept, entries for deleted albums are dropped). Newly added albums can start playing without restarting the script.
+- Tunables live near the top of `mpv_music_wrapper.py` (e.g., album thresholds, recent-albums percent/min/max, rescan interval).
 ## Playlists
 - Supported: m3u/m3u8/pls/cue. Non-audio entries are skipped with warnings. Relative paths are resolved against the playlist location.
 

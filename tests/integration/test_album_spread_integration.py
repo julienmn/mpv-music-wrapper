@@ -27,17 +27,17 @@ def test_album_spread_history_avoidance():
 
     print(
         f"[integration] library={library} albums={len(planner.albums)} "
-        f"tracks={planner.total_track_count} hist_size={planner.album_history_size} picks={picks}"
+        f"tracks={planner.total_track_count} recent_size={planner.recent_albums_size} picks={picks}"
     )
 
     for _ in range(picks):
         planner.maybe_refresh_album_map()
-        pick = mw.choose_album_for_play(planner.albums, list(planner.album_history), planner.album_history_size)
+        pick = mw.choose_album_for_play(planner.albums, list(planner.recent_albums), planner.recent_albums_size)
         assert pick in planner.albums
 
-        blocked = set(list(planner.album_history)[-planner.album_history_size:]) if planner.album_history_size > 0 else set()
-        if planner.album_history_size > 0 and len(blocked) < len(planner.albums):
+        blocked = set(list(planner.recent_albums)[-planner.recent_albums_size:]) if planner.recent_albums_size > 0 else set()
+        if planner.recent_albums_size > 0 and len(blocked) < len(planner.albums):
             # When not all albums are blocked, we should avoid recently played ones.
             assert pick not in blocked
 
-        planner.album_history.append(pick)
+        planner.recent_albums.append(pick)
