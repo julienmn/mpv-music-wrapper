@@ -110,16 +110,4 @@ You can bind these commands to global hotkeys in your desktop environment/window
 - Set `ART_DEBUG=1` to print detailed art candidate selection, stored cover meta, and track separators.
 
 ## Development and tests
-- Runtime use needs no dependencies beyond the requirements above.
-- For tests (pytest):
-  ```bash
-  python -m venv .venv
-  source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-  pip install -r requirements-dev.txt
-  pytest
-  ```
-- Or use the helper (creates .venv if missing, installs dev deps, runs pytest):
-  ```bash
-  python run_tests.py
-  ```
-- For integration checks with a real library, see the `--library` option in `run_tests.py`.
+See `tests/DEV.md` for dev/test setup (pytest, helper scripts). Runtime usage doesn’t require any of that.
