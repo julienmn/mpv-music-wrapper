@@ -255,6 +255,8 @@ def save_recent_albums_cache(path: Path, albums: Sequence[Path]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as fh:
             json.dump([str(p) for p in albums], fh, indent=2)
+        # mpv status lines can stick to stderr; add a newline for readability.
+        print(file=sys.stderr)
         log_info(f"recent albums persistence: saved {len(albums)} entries to {path}")
     except OSError as exc:
         log_warn(f"recent albums persistence: failed to write {path}: {exc}")
