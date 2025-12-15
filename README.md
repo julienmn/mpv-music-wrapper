@@ -69,6 +69,7 @@ play_album /path/to/album
 - Picking inside a bucket:
   - Scope: disc/embedded > album-root > other, with an area override (`AREA_THRESHOLD_PCT`, default 75%).
   - Then resolution/area, then keyword index, then file size, then filename. Album-name token count breaks ties inside album-named buckets.
+  - Squareness: when images are “good size” and not drastically different, the squarer one wins within the same bucket/scope/keyword status.
 - Overrides:
   - A high-res album-named image (no non-front words) can beat a much smaller keyworded image if its area is within `AREA_THRESHOLD_PCT`.
   - Between keyworded images of similar size, one with non-front words loses to one without them (uses the same area threshold).
