@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import math
 import os
 import platform
 import random
@@ -54,6 +55,9 @@ IMAGE_PROBE_BIN = "ffprobe"
 IMAGE_EXTRACT_BIN = "ffmpeg"
 COVER_PREFERRED_FILE = "cover.png"
 AREA_THRESHOLD_PCT = 75
+ASPECT_MIN_AREA_BUCKET1 = 3 * TINY_FRONT_AREA  # require decent size before preferring squarer in bucket 1
+ASPECT_MIN_AREA_OTHER = TINY_FRONT_AREA  # lower floor for non-front buckets
+ASPECT_AREA_RATIO_MIN = 0.5  # smaller image must be at least this fraction of larger area to let aspect decide
 ALBUM_SPREAD_THRESHOLD = 50
 RECENT_ALBUMS_MIN = 20
 RECENT_ALBUMS_MAX = 200
@@ -737,6 +741,24 @@ def select_best_cover(
 ) -> Tuple[Optional[CoverCandidate], str, str]:
     best: Optional[CoverCandidate] = None
 
+    def aspect_penalty(c: CoverCandidate) -> float:
+        if c.width <= 0 or c.height <= 0:
+            return float("inf")
+        return abs(math.log(c.width / c.height))
+
+    def aspect_can_override(c1: CoverCandidate, c2: CoverCandidate) -> bool:
+        floor = ASPECT_MIN_AREA_BUCKET1 if c1.bucket == 1 else ASPECT_MIN_AREA_OTHER
+        if c1.area < floor or c2.area < floor:
+            return False
+        area_ratio = min(c1.area, c2.area) / max(c1.area, c2.area)
+        if area_ratio < ASPECT_AREA_RATIO_MIN:
+            return False
+        if c1.pref_kw_count != c2.pref_kw_count:
+            return False
+        if c1.has_non_front != c2.has_non_front:
+            return False
+        return True
+
     for cand in candidates:
         if best is None:
             best = cand
@@ -803,10 +825,14 @@ def select_best_cover(
                 elif cand.scope_rank > best.scope_rank and allow_worse_scope and cand.area > best.area:
                     pick = True
         elif cand.bucket == best.bucket == 3:
+            if best.area >= ASPECT_MIN_AREA_OTHER and cand.area >= ASPECT_MIN_AREA_OTHER and aspect_penalty(best) <= aspect_penalty(cand):
+                # Keep squarer art even if smaller when both are reasonably sized.
+                continue
             if cand.scope_rank < best.scope_rank:
                 pick = True
             elif cand.scope_rank == best.scope_rank and cand.area > best.area:
-                pick = True
+                if not (aspect_can_override(best, cand) and aspect_penalty(best) <= aspect_penalty(cand)):
+                    pick = True
             elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.kw_rank < best.kw_rank:
                 pick = True
             elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.kw_rank == best.kw_rank and cand.size_bytes > best.size_bytes:
@@ -815,6 +841,11 @@ def select_best_cover(
                 pick = True
             elif cand.scope_rank > best.scope_rank and allow_worse_scope and cand.area > best.area:
                 pick = True
+
+        if not pick and cand.bucket == best.bucket and cand.scope_rank == best.scope_rank:
+            if aspect_can_override(cand, best):
+                if aspect_penalty(cand) <= aspect_penalty(best):
+                    pick = True
 
         if pick:
             best = cand
