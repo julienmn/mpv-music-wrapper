@@ -26,7 +26,7 @@ import tempfile
 import time
 from collections import deque
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 # -----------------
 # Constants / config
@@ -337,6 +337,16 @@ def clean_album_tokens(name: str) -> List[str]:
 def token_overlap_score(base: List[str], target: List[str]) -> int:
     target_set = set(target)
     return sum(1 for t in base if t and t in target_set)
+
+
+def extract_trailing_int(name: str) -> Optional[int]:
+    m = re.search(r"(\d+)(?!.*\d)", name)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
 
 
 def human_rescan_interval(seconds: int) -> str:
@@ -801,12 +811,17 @@ def select_best_cover(
                         pick = True
                     elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.kw_rank < best.kw_rank:
                         pick = True
-                    elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.kw_rank == best.kw_rank and cand.size_bytes > best.size_bytes:
-                        pick = True
-                    elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.kw_rank == best.kw_rank and cand.size_bytes == best.size_bytes and cand.name < best.name:
-                        pick = True
-                    elif cand.scope_rank > best.scope_rank and allow_worse_scope and cand.area > best.area:
-                        pick = True
+                elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.kw_rank == best.kw_rank and cand.size_bytes > best.size_bytes:
+                    pick = True
+                elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.kw_rank == best.kw_rank and cand.size_bytes == best.size_bytes:
+                    cand_num = extract_trailing_int(cand.name) or float("inf")
+                    best_num = extract_trailing_int(best.name) or float("inf")
+                    if cand_num != best_num:
+                        pick = cand_num < best_num
+                    else:
+                        pick = cand.name < best.name
+                elif cand.scope_rank > best.scope_rank and allow_worse_scope and cand.area > best.area:
+                    pick = True
                 elif cand.pref_kw_count == 0 and not cand.has_non_front and best.pref_kw_count > 0 and cand.name_token_score > 0 and cand.area * 100 >= best.area * AREA_THRESHOLD_PCT:
                     pick = True
         elif cand.bucket == best.bucket == 2:
