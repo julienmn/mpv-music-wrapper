@@ -977,7 +977,7 @@ def strip_embedded_art(file: Path) -> None:
     if not file.exists():
         return
     ext = lower_ext(file)
-    tmp = file.with_suffix(file.suffix + ".noart")
+    tmp = file.with_name(f"{file.stem}.noart{file.suffix}")
     cmd = [IMAGE_EXTRACT_BIN, "-loglevel", "error", "-nostdin", "-y", "-i", str(file), "-map", "0:a", "-map_metadata", "0", "-vn", "-dn", "-sn", "-c", "copy", str(tmp)]
     proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
@@ -996,7 +996,7 @@ def strip_id3_if_flac(file: Path) -> None:
     if lower_ext(file) != "flac":
         return
     # Remove ID3 via ffmpeg copy
-    tmp = file.with_suffix(file.suffix + ".clean")
+    tmp = file.with_name(f"{file.stem}.clean{file.suffix}")
     cmd = [IMAGE_EXTRACT_BIN, "-loglevel", "error", "-nostdin", "-y", "-i", str(file), "-map", "0:a", "-map_metadata", "0", "-vn", "-dn", "-sn", "-c", "copy", str(tmp)]
     proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
@@ -1014,7 +1014,7 @@ def strip_id3_if_flac(file: Path) -> None:
 
 def strip_rg_tags_if_possible(file: Path) -> None:
     # Remove ReplayGain tags by rewriting metadata (all formats) via ffmpeg copy.
-    tmp = file.with_suffix(file.suffix + ".norg")
+    tmp = file.with_name(f"{file.stem}.norg{file.suffix}")
     cmd = [COVER_LNORM_BIN, "-loglevel", "error", "-nostdin", "-y", "-i", str(file), "-map", "0:a", "-map_metadata", "-1", "-vn", "-dn", "-sn", "-c", "copy", str(tmp)]
     proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
@@ -1061,7 +1061,7 @@ def add_replaygain_if_requested(file: Path, normalize: bool) -> None:
         return
     gain_db = -18.0 - measured_i
     peak_linear = 10 ** (max_true_peak / 20.0)
-    tagged = file.with_suffix(file.suffix + ".rg")
+    tagged = file.with_name(f"{file.stem}.rg{file.suffix}")
     tag_cmd = [
         COVER_LNORM_BIN,
         "-loglevel",
