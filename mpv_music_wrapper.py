@@ -1037,8 +1037,7 @@ def add_replaygain_if_requested(file: Path, normalize: bool) -> None:
     # Pass 1: measure loudness/peak
     measure_cmd = [
         COVER_LNORM_BIN,
-        "-loglevel",
-        "error",
+        "-hide_banner",
         "-nostdin",
         "-i",
         str(file),
@@ -1086,14 +1085,15 @@ def add_replaygain_if_requested(file: Path, normalize: bool) -> None:
         f"replaygain_track_peak={peak_linear:.6f}",
         str(tagged),
     ]
-    proc2 = subprocess.run(tag_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc2 = subprocess.run(tag_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc2.returncode == 0 and tagged.exists() and tagged.stat().st_size > 0:
         try:
             tagged.replace(file)
         except OSError:
             log_warn(f"replaygain tag write failed for {file}")
     else:
-        log_warn(f"replaygain tag write failed for {file}; RG tags not added")
+        err = (proc2.stderr or "").strip()
+        log_warn(f"replaygain tag write failed for {file}; RG tags not added. ffmpeg stderr: {err}")
 
 
 def copy_audio(src: Path, dst: Path) -> None:
