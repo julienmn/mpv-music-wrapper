@@ -1048,12 +1048,16 @@ def add_replaygain_if_requested(file: Path, normalize: bool) -> None:
         "-",
     ]
     proc = subprocess.run(measure_cmd, capture_output=True, text=True)
-    if proc.returncode != 0 or not proc.stderr:
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0 or not combined:
         log_warn(f"replaygain scan (loudnorm) failed for {file}; RG tags not added")
         return
     try:
-        m = re.search(r"\\{.*\\}", proc.stderr, re.S)
-        data = json.loads(m.group(0)) if m else {}
+        m = re.search(r"\{.*\}", combined, re.S)
+        if not m:
+            log_warn(f"replaygain scan parse failed for {file}: no loudnorm JSON found")
+            return
+        data = json.loads(m.group(0))
         measured_i = float(data.get("input_i", 0.0))
         max_true_peak = float(data.get("input_tp", 0.0))
     except Exception as exc:
