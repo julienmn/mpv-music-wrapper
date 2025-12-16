@@ -1598,6 +1598,13 @@ def main(argv: Sequence[str]) -> None:
 
             mode = "replace" if highest_appended < 0 else "append-play"
             append_to_mpv(ipc, info.staged_path, mode)
+            # Inform user that the next track is staged and ready.
+            gain_display = "none"
+            rg_match = re.search(r"ReplayGain\\[track\\]: ([^|]+)", info.cover_detail)
+            if rg_match:
+                gain_display = rg_match.group(1).strip()
+            images_count = info.cover_detail.count("\\n") + (1 if info.cover_detail.strip() else 0)
+            print(f"\\033[32m[Next]\\033[0m ready: track={next_to_prepare + 1} RG={gain_display} images={images_count}", file=sys.stderr)
             highest_appended = next_to_prepare
             next_to_prepare += 1
             appended = True
