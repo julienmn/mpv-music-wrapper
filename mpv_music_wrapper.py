@@ -1013,9 +1013,33 @@ def strip_id3_if_flac(file: Path) -> None:
 
 
 def strip_rg_tags_if_possible(file: Path) -> None:
-    # Remove ReplayGain tags by rewriting metadata (all formats) via ffmpeg copy.
+    # Clear ReplayGain tags while preserving other metadata via ffmpeg copy.
     tmp = file.with_name(f"{file.stem}.norg{file.suffix}")
-    cmd = [COVER_LNORM_BIN, "-loglevel", "error", "-nostdin", "-y", "-i", str(file), "-map", "0:a", "-map_metadata", "-1", "-vn", "-dn", "-sn", "-c", "copy", str(tmp)]
+    cmd = [
+        COVER_LNORM_BIN,
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+        "-i",
+        str(file),
+        "-map",
+        "0:a",
+        "-map_metadata",
+        "0",
+        "-vn",
+        "-dn",
+        "-sn",
+        "-c",
+        "copy",
+        "-metadata",
+        "replaygain_track_gain=",
+        "-metadata",
+        "replaygain_track_peak=",
+        "-metadata",
+        "replaygain_reference_loudness=",
+        str(tmp),
+    ]
     proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
         try:
