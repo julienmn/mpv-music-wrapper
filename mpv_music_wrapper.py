@@ -1441,7 +1441,6 @@ def start_mpv(ipc_path: str, normalize: bool, mpv_additional_args: List[str]) ->
     args.extend(["--force-window=immediate", "--idle=yes", "--keep-open=yes", f"--input-ipc-server={ipc_path}", "--cover-art-auto=exact"])
     if normalize:
         args.append("--replaygain=track")
-        args.append("--replaygain-clip=yes")
     else:
         args.append("--replaygain=no")
     proc = subprocess.Popen(["mpv", *args])
