@@ -72,7 +72,6 @@ DEFAULT_SOCKET_DIR = Path("/tmp")
 WINDOWS_PIPE_PREFIX = r"\\.\\pipe\\"
 
 ART_DEBUG = os.environ.get("ART_DEBUG", "0") == "1"
-LOUDNORM_AVAILABLE = False
 
 # --------------
 # Logging helpers
@@ -88,6 +87,26 @@ def log_warn(msg: str) -> None:
 
 def log_error(msg: str) -> None:
     print(f"[error] {msg}", file=sys.stderr)
+
+
+def stderr_supports_color() -> bool:
+    return sys.stderr.isatty() and os.environ.get("NO_COLOR") is None
+
+
+COLOR_GREEN = "32"
+COLOR_YELLOW = "33"
+COLOR_MAGENTA = "35"
+COLOR_CYAN = "36"
+
+
+def colorize(text: str, color_code: str) -> str:
+    if not stderr_supports_color():
+        return text
+    return f"\033[{color_code}m{text}\033[0m"
+
+
+def colored_tag(tag: str, color_code: str) -> str:
+    return colorize(f"[{tag}]", color_code)
 
 
 def die(msg: str, code: int = 1) -> None:
@@ -531,13 +550,24 @@ def choose_tmp_root() -> Path:
 
 
 def check_dependencies(normalize: bool) -> None:
-    required = ["mpv", IMAGE_PROBE_BIN, IMAGE_EXTRACT_BIN, "python", LOUDNORM_BIN]
-    for dep in required:
-        if shutil.which(dep) is None:
-            die(f"{dep} not found in PATH")
-    globals()["LOUDNORM_AVAILABLE"] = shutil.which(LOUDNORM_BIN) is not None
-    if normalize and not LOUDNORM_AVAILABLE:
-        die("--normalize requested but ffmpeg (loudnorm) not found")
+    required: List[str] = ["mpv", IMAGE_PROBE_BIN, IMAGE_EXTRACT_BIN]
+    if normalize:
+        required.append(LOUDNORM_BIN)
+
+    missing = [dep for dep in dict.fromkeys(required) if shutil.which(dep) is None]
+    if missing:
+        die("Missing required dependencies in PATH: " + ", ".join(missing))
+
+    if normalize:
+        proc = subprocess.run(
+            [LOUDNORM_BIN, "-hide_banner", "-filters"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        combined = (proc.stdout or "") + (proc.stderr or "")
+        if proc.returncode != 0 or "loudnorm" not in combined:
+            die("--normalize requested but ffmpeg build does not provide the loudnorm filter")
 
 
 # --------------
@@ -741,6 +771,26 @@ def analyze_candidates(
     return candidates_meta, detail_lines
 
 
+def aspect_penalty(c: CoverCandidate) -> float:
+    if c.width <= 0 or c.height <= 0:
+        return float("inf")
+    return abs(math.log(c.width / c.height))
+
+
+def aspect_can_override(c1: CoverCandidate, c2: CoverCandidate) -> bool:
+    floor = ASPECT_MIN_AREA_BUCKET1 if c1.bucket == 1 else ASPECT_MIN_AREA_OTHER
+    if c1.area < floor or c2.area < floor:
+        return False
+    area_ratio = min(c1.area, c2.area) / max(c1.area, c2.area)
+    if area_ratio < ASPECT_AREA_RATIO_MIN:
+        return False
+    if c1.pref_kw_count != c2.pref_kw_count:
+        return False
+    if c1.has_non_front != c2.has_non_front:
+        return False
+    return True
+
+
 def select_best_cover(
     candidates: List[CoverCandidate],
     detail_lines: List[str],
@@ -749,24 +799,6 @@ def select_best_cover(
     base_root: Optional[Path],
 ) -> Tuple[Optional[CoverCandidate], str, str]:
     best: Optional[CoverCandidate] = None
-
-    def aspect_penalty(c: CoverCandidate) -> float:
-        if c.width <= 0 or c.height <= 0:
-            return float("inf")
-        return abs(math.log(c.width / c.height))
-
-    def aspect_can_override(c1: CoverCandidate, c2: CoverCandidate) -> bool:
-        floor = ASPECT_MIN_AREA_BUCKET1 if c1.bucket == 1 else ASPECT_MIN_AREA_OTHER
-        if c1.area < floor or c2.area < floor:
-            return False
-        area_ratio = min(c1.area, c2.area) / max(c1.area, c2.area)
-        if area_ratio < ASPECT_AREA_RATIO_MIN:
-            return False
-        if c1.pref_kw_count != c2.pref_kw_count:
-            return False
-        if c1.has_non_front != c2.has_non_front:
-            return False
-        return True
 
     for cand in candidates:
         if best is None:
@@ -1124,7 +1156,7 @@ def add_replaygain_if_requested(file: Path, normalize: bool) -> Optional[str]:
         err = (proc2.stderr or "").strip()
         log_warn(f"replaygain tag write failed for {file}; RG tags not added. ffmpeg stderr: {err}")
         return None
-    return f"{gain_db:.2f} dB"
+    return f"{gain_db:.2f}dB"
 
 
 def copy_audio(src: Path, dst: Path) -> None:
@@ -1199,7 +1231,7 @@ def get_current_rg_track_gain(ipc: MpvIPC) -> Optional[str]:
         return m.group(1)
     m = re.search(r'"data"\s*:\s*([-0-9.]+)', resp)
     if m:
-        return f"{m.group(1)} dB"
+        return f"{m.group(1)}dB"
     return None
 
 
@@ -1242,7 +1274,7 @@ def print_header(mode: str, library: Optional[Path], album_dir: Optional[Path], 
         random_desc_line = ""
         random_album_line = ""
 
-    header_lines = ["\033[35m🎵 mpv music wrapper 🎵\033[0m", "---"]
+    header_lines = [colorize("🎵 mpv music wrapper 🎵", COLOR_MAGENTA), "---"]
     header_lines.append(path_line)
     header_lines.append(mode_line)
     if mode == "random":
@@ -1266,11 +1298,11 @@ def print_header(mode: str, library: Optional[Path], album_dir: Optional[Path], 
             max_len = vlen
     inner_width = max_len
 
-    print("\033[36m╔" + "═" * (inner_width + 2) + "╗\033[0m", file=sys.stderr)
+    print(colorize("╔" + "═" * (inner_width + 2) + "╗", COLOR_CYAN), file=sys.stderr)
     is_first = True
     for line in header_lines:
         if line == "---":
-            print("\033[36m╟" + "─" * (inner_width + 2) + "╢\033[0m", file=sys.stderr)
+            print(colorize("╟" + "─" * (inner_width + 2) + "╢", COLOR_CYAN), file=sys.stderr)
             continue
         vlen = visible_len(line)
         pad_len = max(inner_width - vlen, 0)
@@ -1279,8 +1311,10 @@ def print_header(mode: str, library: Optional[Path], album_dir: Optional[Path], 
             left_pad = pad_len // 2
             pad_len -= left_pad
             is_first = False
-        print(f"\033[36m║\033[0m {' ' * left_pad}{line}{' ' * pad_len} \033[36m║\033[0m", file=sys.stderr)
-    print("\033[36m╚" + "═" * (inner_width + 2) + "╝\033[0m", file=sys.stderr)
+        left_border = colorize("║", COLOR_CYAN)
+        right_border = colorize("║", COLOR_CYAN)
+        print(f"{left_border} {' ' * left_pad}{line}{' ' * pad_len} {right_border}", file=sys.stderr)
+    print(colorize("╚" + "═" * (inner_width + 2) + "╝", COLOR_CYAN), file=sys.stderr)
 
 
 # -----------------
@@ -1391,16 +1425,13 @@ def gather_playlist_tracks(file: Path) -> List[Path]:
     dir_path = file.parent.resolve()
     tracks: List[Path] = []
 
-    def add_track(p: Path) -> None:
-        tracks.append(p)
-
     ext = lower_ext(file)
     if ext in ("m3u", "m3u8"):
-        parse_m3u_like(file, dir_path, add_track)
+        parse_m3u_like(file, dir_path, tracks.append)
     elif ext == "pls":
-        parse_pls(file, dir_path, add_track)
+        parse_pls(file, dir_path, tracks.append)
     elif ext == "cue":
-        parse_cue_minimal(file, dir_path, add_track)
+        parse_cue_minimal(file, dir_path, tracks.append)
     else:
         die(f"Unsupported playlist extension: {ext}")
 
@@ -1492,8 +1523,8 @@ def print_rg_for_pos(pos: int, tracks: List[Path], track_infos: Dict[int, TrackI
     src_path = tracks[pos] if pos < len(tracks) else Path("unknown")
     cover_detail = track_infos.get(pos).cover_detail if pos in track_infos else "[ ] no images found"
 
-    print(f"\n\033[33m[RG]\033[0m {msg} | src: {display_path(src_path, display_root)}", file=sys.stderr)
-    print(f"\033[36m[ART]\033[0m candidates:\n{cover_detail}", file=sys.stderr)
+    print(f"\n{colored_tag('RG', COLOR_YELLOW)} {msg} | src: {display_path(src_path, display_root)}", file=sys.stderr)
+    print(f"{colored_tag('ART', COLOR_CYAN)} candidates:\n{cover_detail}", file=sys.stderr)
     print("----------------------------------------", file=sys.stderr)
 
 
@@ -1505,31 +1536,92 @@ def clean_finished(upto: int, last_cleaned: int, tmp_root: Path) -> int:
     return last_cleaned
 
 
-def main(argv: Sequence[str]) -> None:
-    args = parse_args(argv)
-    persist_recent_albums = args.persist_recent_albums
-    cache_path = resolve_recent_albums_cache_path() if persist_recent_albums else None
+@dataclasses.dataclass
+class QueueState:
+    next_to_prepare: int
+    highest_appended: int
+    current_pos: int
+    track_infos: Dict[int, "TrackInfo"]
+    album_by_index: Dict[int, Path]
 
-    check_dependencies(args.normalize)
 
-    display_root = Path("/")
+def queue_more(
+    *,
+    total_tracks: int,
+    album_spread_mode: bool,
+    planner: Optional["RandomPlanner"],
+    persist_recent_albums: bool,
+    cache_path: Optional[Path],
+    tracks: List[Path],
+    state: QueueState,
+    ipc: "MpvIPC",
+    tmp_root: Path,
+    library: Optional[Path],
+    display_root: Path,
+    normalize: bool,
+) -> bool:
+    appended = False
+    target = state.current_pos + BUFFER_AHEAD
+    while state.highest_appended < target:
+        if album_spread_mode:
+            assert planner is not None
+            if state.next_to_prepare >= len(tracks):
+                rescan_performed = planner.maybe_refresh_album_map()
+                if rescan_performed and persist_recent_albums and cache_path:
+                    save_recent_albums_cache(cache_path, planner.recent_albums)
+                album_choice = choose_album_for_play(planner.albums, list(planner.recent_albums), planner.recent_albums_size)
+                if not album_choice:
+                    break
+                track_choice = planner.choose_track_in_album(album_choice)
+                if not track_choice:
+                    break
+                state.album_by_index[state.next_to_prepare] = album_choice
+                tracks.append(track_choice)
+            src = tracks[state.next_to_prepare]
+        else:
+            if state.next_to_prepare >= total_tracks:
+                break
+            src = tracks[state.next_to_prepare]
+
+        if state.next_to_prepare == 0:
+            log_info("preparing first track...")
+        info = prepare_track(state.next_to_prepare, src, tmp_root, library, display_root, normalize)
+        state.track_infos[state.next_to_prepare] = info
+
+        mode = "replace" if state.highest_appended < 0 else "append-play"
+        append_to_mpv(ipc, info.staged_path, mode)
+        # Inform user that the next track is staged and ready (skip first track).
+        if state.next_to_prepare > 0:
+            gain_display = info.rg_gain_display if info.rg_gain_display else "none"
+            detail_stripped = info.cover_detail.strip()
+            images_count = 0 if (not detail_stripped or detail_stripped == "[ ] no images found") else detail_stripped.count("\n") + 1
+            print(f"\n{colored_tag('Next', COLOR_GREEN)} ready: track={state.next_to_prepare + 1} RG={gain_display} images={images_count}", file=sys.stderr)
+        state.highest_appended = state.next_to_prepare
+        state.next_to_prepare += 1
+        appended = True
+    return appended
+
+
+def resolve_display_root(args: argparse.Namespace) -> Path:
     if args.mode == "random":
-        display_root = Path(args.library).resolve()
-    elif args.mode == "album":
-        display_root = Path(args.album_dir).resolve()
-    elif args.mode == "playlist":
-        display_root = Path(args.playlist_file).resolve().parent
+        return Path(args.library).resolve()
+    if args.mode == "album":
+        return Path(args.album_dir).resolve()
+    if args.mode == "playlist":
+        return Path(args.playlist_file).resolve().parent
+    return Path("/")
 
-    tmp_root = choose_tmp_root()
-    pid = os.getpid()
+
+def build_ipc_path(pid: int) -> Tuple[str, bool]:
     system = platform.system().lower()
     is_windows = system == "windows"
     if is_windows:
-        ipc_path = WINDOWS_PIPE_PREFIX + f"mpv-{pid}"
-    else:
-        ipc_path = str(DEFAULT_SOCKET_DIR / f"mpv-{pid}.sock")
+        return WINDOWS_PIPE_PREFIX + f"mpv-{pid}", True
+    return str(DEFAULT_SOCKET_DIR / f"mpv-{pid}.sock"), False
 
-    mpv_proc = start_mpv(ipc_path, args.normalize, args.mpv_additional_args)
+
+def start_mpv_and_connect(ipc_path: str, is_windows: bool, normalize: bool, mpv_additional_args: Sequence[str]) -> Tuple[subprocess.Popen, MpvIPC]:
+    mpv_proc = start_mpv(ipc_path, normalize, mpv_additional_args)
     ipc = MpvIPC(ipc_path, is_windows_pipe=is_windows)
     if not wait_for_ipc(ipc_path, is_windows):
         mpv_proc.terminate()
@@ -1537,10 +1629,18 @@ def main(argv: Sequence[str]) -> None:
 
     # clear playlist
     ipc.send({"command": ["playlist-clear"]})
+    return mpv_proc, ipc
 
+
+def load_tracks_and_planner(
+    args: argparse.Namespace,
+    *,
+    persist_recent_albums: bool,
+    cache_path: Optional[Path],
+) -> Tuple[List[Path], Optional[RandomPlanner], bool, int, int]:
     planner: Optional[RandomPlanner] = None
     if args.mode == "random":
-        print("[info] scanning library...", file=sys.stderr)
+        log_info("scanning library...")
         planner = RandomPlanner.from_library(Path(args.library))
         if persist_recent_albums and cache_path:
             load_recent_albums_cache(cache_path, planner)
@@ -1548,22 +1648,49 @@ def main(argv: Sequence[str]) -> None:
         album_spread_mode = planner.album_spread_mode
         recent_albums_size = planner.recent_albums_size
         total = planner.total_track_count if album_spread_mode else len(tracks)
-    elif args.mode == "album":
-        tracks = gather_album_tracks(Path(args.album_dir))
-        album_spread_mode = False
-        recent_albums_size = 0
-        total = len(tracks)
-    else:
-        tracks = gather_playlist_tracks(Path(args.playlist_file))
-        album_spread_mode = False
-        recent_albums_size = 0
-        total = len(tracks)
+        return tracks, planner, album_spread_mode, recent_albums_size, total
 
+    if args.mode == "album":
+        tracks = gather_album_tracks(Path(args.album_dir))
+        return tracks, None, False, 0, len(tracks)
+
+    tracks = gather_playlist_tracks(Path(args.playlist_file))
+    return tracks, None, False, 0, len(tracks)
+
+
+def build_header_paths(args: argparse.Namespace) -> Tuple[Optional[Path], Optional[Path], Optional[Path]]:
+    library = Path(args.library) if args.library else None
+    album_dir = Path(args.album_dir) if args.album_dir else None
+    playlist_file = Path(args.playlist_file) if args.playlist_file else None
+    return library, album_dir, playlist_file
+
+
+def main(argv: Sequence[str]) -> None:
+    args = parse_args(argv)
+    persist_recent_albums = args.persist_recent_albums
+    cache_path = resolve_recent_albums_cache_path() if persist_recent_albums else None
+
+    check_dependencies(args.normalize)
+
+    display_root = resolve_display_root(args)
+
+    tmp_root = choose_tmp_root()
+    pid = os.getpid()
+    ipc_path, is_windows = build_ipc_path(pid)
+    mpv_proc, ipc = start_mpv_and_connect(ipc_path, is_windows, args.normalize, args.mpv_additional_args)
+
+    tracks, planner, album_spread_mode, recent_albums_size, total = load_tracks_and_planner(
+        args,
+        persist_recent_albums=persist_recent_albums,
+        cache_path=cache_path,
+    )
+
+    library, album_dir, playlist_file = build_header_paths(args)
     print_header(
         mode=args.mode,
-        library=Path(args.library) if args.library else None,
-        album_dir=Path(args.album_dir) if args.album_dir else None,
-        playlist_file=Path(args.playlist_file) if args.playlist_file else None,
+        library=library,
+        album_dir=album_dir,
+        playlist_file=playlist_file,
         total=total,
         socket_path=ipc_path,
         normalize=args.normalize,
@@ -1572,57 +1699,31 @@ def main(argv: Sequence[str]) -> None:
         recent_albums_size=recent_albums_size,
     )
 
-    next_to_prepare = 0
-    highest_appended = -1
-    current_pos = -1
+    state = QueueState(
+        next_to_prepare=0,
+        highest_appended=-1,
+        current_pos=-1,
+        track_infos={},
+        album_by_index={},
+    )
     last_cleaned = -1
-    track_infos: Dict[int, TrackInfo] = {}
-    album_by_index: Dict[int, Path] = {}
+    library_path = Path(args.library) if args.library else None
+    queue_common = {
+        "total_tracks": total,
+        "album_spread_mode": album_spread_mode,
+        "planner": planner,
+        "persist_recent_albums": persist_recent_albums,
+        "cache_path": cache_path,
+        "tracks": tracks,
+        "state": state,
+        "ipc": ipc,
+        "tmp_root": tmp_root,
+        "library": library_path,
+        "display_root": display_root,
+        "normalize": args.normalize,
+    }
 
-    def queue_more(total_tracks: int) -> bool:
-        nonlocal next_to_prepare, highest_appended, tracks
-        appended = False
-        target = current_pos + BUFFER_AHEAD
-        while highest_appended < target:
-            if album_spread_mode:
-                assert planner is not None
-                if next_to_prepare >= len(tracks):
-                    rescan_performed = planner.maybe_refresh_album_map()
-                    if rescan_performed and persist_recent_albums and cache_path:
-                        save_recent_albums_cache(cache_path, planner.recent_albums)
-                    album_choice = choose_album_for_play(planner.albums, list(planner.recent_albums), planner.recent_albums_size)
-                    if not album_choice:
-                        break
-                    track_choice = planner.choose_track_in_album(album_choice)
-                    if not track_choice:
-                        break
-                    album_by_index[next_to_prepare] = album_choice
-                    tracks.append(track_choice)
-                src = tracks[next_to_prepare]
-            else:
-                if next_to_prepare >= total_tracks:
-                    break
-                src = tracks[next_to_prepare]
-
-            if next_to_prepare == 0:
-                print("[info] preparing first track...", file=sys.stderr)
-            info = prepare_track(next_to_prepare, src, tmp_root, Path(args.library) if args.library else None, display_root, args.normalize)
-            track_infos[next_to_prepare] = info
-
-            mode = "replace" if highest_appended < 0 else "append-play"
-            append_to_mpv(ipc, info.staged_path, mode)
-            # Inform user that the next track is staged and ready (skip first track).
-            if next_to_prepare > 0:
-                gain_display = info.rg_gain_display if info.rg_gain_display else "none"
-                detail_stripped = info.cover_detail.strip()
-                images_count = 0 if (not detail_stripped or detail_stripped == "[ ] no images found") else detail_stripped.count("\n") + 1
-                print(f"\n\033[32m[Next]\033[0m ready: track={next_to_prepare + 1} RG={gain_display} images={images_count}", file=sys.stderr)
-            highest_appended = next_to_prepare
-            next_to_prepare += 1
-            appended = True
-        return appended
-
-    queue_more(total)
+    queue_more(**queue_common)
 
     while True:
         time.sleep(POLL_INTERVAL)
@@ -1632,32 +1733,38 @@ def main(argv: Sequence[str]) -> None:
         pos = get_playlist_pos(ipc)
         if pos is None:
             if album_spread_mode:
-                if queue_more(total):
+                appended = queue_more(**queue_common)
+                if appended:
                     continue
                 else:
                     break
             else:
-                if next_to_prepare >= total:
+                if state.next_to_prepare >= total:
                     break
                 else:
-                    queue_more(total)
+                    queue_more(**queue_common)
                     continue
 
-        if pos != current_pos:
-            if album_spread_mode and pos in album_by_index:
-                planner.recent_albums.append(album_by_index[pos])
+        if pos != state.current_pos:
+            if album_spread_mode and pos in state.album_by_index:
+                planner.recent_albums.append(state.album_by_index[pos])
             last_cleaned = clean_finished(pos, last_cleaned, tmp_root)
-            current_pos = pos
-            print_rg_for_pos(pos, tracks, track_infos, ipc, display_root)
+            state.current_pos = pos
+            print_rg_for_pos(pos, tracks, state.track_infos, ipc, display_root)
             if album_spread_mode:
-                if not queue_more(total):
+                appended = queue_more(**queue_common)
+                if not appended:
                     break
             else:
-                queue_more(total)
+                queue_more(**queue_common)
 
     if persist_recent_albums and cache_path and planner is not None:
         save_recent_albums_cache(cache_path, planner.recent_albums)
 
+    cleanup_session(tmp_root, ipc_path, is_windows, mpv_proc)
+
+
+def cleanup_session(tmp_root: Path, ipc_path: str, is_windows: bool, mpv_proc: subprocess.Popen) -> None:
     shutil.rmtree(tmp_root, ignore_errors=True)
     try:
         if is_windows:
