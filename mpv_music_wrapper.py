@@ -1597,31 +1597,26 @@ def queue_more(
     return appended, next_to_prepare, highest_appended
 
 
-def main(argv: Sequence[str]) -> None:
-    args = parse_args(argv)
-    persist_recent_albums = args.persist_recent_albums
-    cache_path = resolve_recent_albums_cache_path() if persist_recent_albums else None
-
-    check_dependencies(args.normalize)
-
-    display_root = Path("/")
+def resolve_display_root(args: argparse.Namespace) -> Path:
     if args.mode == "random":
-        display_root = Path(args.library).resolve()
-    elif args.mode == "album":
-        display_root = Path(args.album_dir).resolve()
-    elif args.mode == "playlist":
-        display_root = Path(args.playlist_file).resolve().parent
+        return Path(args.library).resolve()
+    if args.mode == "album":
+        return Path(args.album_dir).resolve()
+    if args.mode == "playlist":
+        return Path(args.playlist_file).resolve().parent
+    return Path("/")
 
-    tmp_root = choose_tmp_root()
-    pid = os.getpid()
+
+def build_ipc_path(pid: int) -> Tuple[str, bool]:
     system = platform.system().lower()
     is_windows = system == "windows"
     if is_windows:
-        ipc_path = WINDOWS_PIPE_PREFIX + f"mpv-{pid}"
-    else:
-        ipc_path = str(DEFAULT_SOCKET_DIR / f"mpv-{pid}.sock")
+        return WINDOWS_PIPE_PREFIX + f"mpv-{pid}", True
+    return str(DEFAULT_SOCKET_DIR / f"mpv-{pid}.sock"), False
 
-    mpv_proc = start_mpv(ipc_path, args.normalize, args.mpv_additional_args)
+
+def start_mpv_and_connect(ipc_path: str, is_windows: bool, normalize: bool, mpv_additional_args: Sequence[str]) -> Tuple[subprocess.Popen, MpvIPC]:
+    mpv_proc = start_mpv(ipc_path, normalize, mpv_additional_args)
     ipc = MpvIPC(ipc_path, is_windows_pipe=is_windows)
     if not wait_for_ipc(ipc_path, is_windows):
         mpv_proc.terminate()
@@ -1629,7 +1624,15 @@ def main(argv: Sequence[str]) -> None:
 
     # clear playlist
     ipc.send({"command": ["playlist-clear"]})
+    return mpv_proc, ipc
 
+
+def load_tracks_and_planner(
+    args: argparse.Namespace,
+    *,
+    persist_recent_albums: bool,
+    cache_path: Optional[Path],
+) -> Tuple[List[Path], Optional[RandomPlanner], bool, int, int]:
     planner: Optional[RandomPlanner] = None
     if args.mode == "random":
         print("[info] scanning library...", file=sys.stderr)
@@ -1640,22 +1643,49 @@ def main(argv: Sequence[str]) -> None:
         album_spread_mode = planner.album_spread_mode
         recent_albums_size = planner.recent_albums_size
         total = planner.total_track_count if album_spread_mode else len(tracks)
-    elif args.mode == "album":
-        tracks = gather_album_tracks(Path(args.album_dir))
-        album_spread_mode = False
-        recent_albums_size = 0
-        total = len(tracks)
-    else:
-        tracks = gather_playlist_tracks(Path(args.playlist_file))
-        album_spread_mode = False
-        recent_albums_size = 0
-        total = len(tracks)
+        return tracks, planner, album_spread_mode, recent_albums_size, total
 
+    if args.mode == "album":
+        tracks = gather_album_tracks(Path(args.album_dir))
+        return tracks, None, False, 0, len(tracks)
+
+    tracks = gather_playlist_tracks(Path(args.playlist_file))
+    return tracks, None, False, 0, len(tracks)
+
+
+def build_header_paths(args: argparse.Namespace) -> Tuple[Optional[Path], Optional[Path], Optional[Path]]:
+    library = Path(args.library) if args.library else None
+    album_dir = Path(args.album_dir) if args.album_dir else None
+    playlist_file = Path(args.playlist_file) if args.playlist_file else None
+    return library, album_dir, playlist_file
+
+
+def main(argv: Sequence[str]) -> None:
+    args = parse_args(argv)
+    persist_recent_albums = args.persist_recent_albums
+    cache_path = resolve_recent_albums_cache_path() if persist_recent_albums else None
+
+    check_dependencies(args.normalize)
+
+    display_root = resolve_display_root(args)
+
+    tmp_root = choose_tmp_root()
+    pid = os.getpid()
+    ipc_path, is_windows = build_ipc_path(pid)
+    mpv_proc, ipc = start_mpv_and_connect(ipc_path, is_windows, args.normalize, args.mpv_additional_args)
+
+    tracks, planner, album_spread_mode, recent_albums_size, total = load_tracks_and_planner(
+        args,
+        persist_recent_albums=persist_recent_albums,
+        cache_path=cache_path,
+    )
+
+    library, album_dir, playlist_file = build_header_paths(args)
     print_header(
         mode=args.mode,
-        library=Path(args.library) if args.library else None,
-        album_dir=Path(args.album_dir) if args.album_dir else None,
-        playlist_file=Path(args.playlist_file) if args.playlist_file else None,
+        library=library,
+        album_dir=album_dir,
+        playlist_file=playlist_file,
         total=total,
         socket_path=ipc_path,
         normalize=args.normalize,
@@ -1671,24 +1701,27 @@ def main(argv: Sequence[str]) -> None:
     track_infos: Dict[int, TrackInfo] = {}
     album_by_index: Dict[int, Path] = {}
     library_path = Path(args.library) if args.library else None
+    queue_common = {
+        "total_tracks": total,
+        "album_spread_mode": album_spread_mode,
+        "planner": planner,
+        "persist_recent_albums": persist_recent_albums,
+        "cache_path": cache_path,
+        "tracks": tracks,
+        "album_by_index": album_by_index,
+        "track_infos": track_infos,
+        "ipc": ipc,
+        "tmp_root": tmp_root,
+        "library": library_path,
+        "display_root": display_root,
+        "normalize": args.normalize,
+    }
 
     _, next_to_prepare, highest_appended = queue_more(
-        total_tracks=total,
         current_pos=current_pos,
-        album_spread_mode=album_spread_mode,
-        planner=planner,
-        persist_recent_albums=persist_recent_albums,
-        cache_path=cache_path,
-        tracks=tracks,
         next_to_prepare=next_to_prepare,
         highest_appended=highest_appended,
-        album_by_index=album_by_index,
-        track_infos=track_infos,
-        ipc=ipc,
-        tmp_root=tmp_root,
-        library=library_path,
-        display_root=display_root,
-        normalize=args.normalize,
+        **queue_common,
     )
 
     while True:
@@ -1700,22 +1733,10 @@ def main(argv: Sequence[str]) -> None:
         if pos is None:
             if album_spread_mode:
                 appended, next_to_prepare, highest_appended = queue_more(
-                    total_tracks=total,
                     current_pos=current_pos,
-                    album_spread_mode=album_spread_mode,
-                    planner=planner,
-                    persist_recent_albums=persist_recent_albums,
-                    cache_path=cache_path,
-                    tracks=tracks,
                     next_to_prepare=next_to_prepare,
                     highest_appended=highest_appended,
-                    album_by_index=album_by_index,
-                    track_infos=track_infos,
-                    ipc=ipc,
-                    tmp_root=tmp_root,
-                    library=library_path,
-                    display_root=display_root,
-                    normalize=args.normalize,
+                    **queue_common,
                 )
                 if appended:
                     continue
@@ -1726,22 +1747,10 @@ def main(argv: Sequence[str]) -> None:
                     break
                 else:
                     _, next_to_prepare, highest_appended = queue_more(
-                        total_tracks=total,
                         current_pos=current_pos,
-                        album_spread_mode=album_spread_mode,
-                        planner=planner,
-                        persist_recent_albums=persist_recent_albums,
-                        cache_path=cache_path,
-                        tracks=tracks,
                         next_to_prepare=next_to_prepare,
                         highest_appended=highest_appended,
-                        album_by_index=album_by_index,
-                        track_infos=track_infos,
-                        ipc=ipc,
-                        tmp_root=tmp_root,
-                        library=library_path,
-                        display_root=display_root,
-                        normalize=args.normalize,
+                        **queue_common,
                     )
                     continue
 
@@ -1753,48 +1762,28 @@ def main(argv: Sequence[str]) -> None:
             print_rg_for_pos(pos, tracks, track_infos, ipc, display_root)
             if album_spread_mode:
                 appended, next_to_prepare, highest_appended = queue_more(
-                    total_tracks=total,
                     current_pos=current_pos,
-                    album_spread_mode=album_spread_mode,
-                    planner=planner,
-                    persist_recent_albums=persist_recent_albums,
-                    cache_path=cache_path,
-                    tracks=tracks,
                     next_to_prepare=next_to_prepare,
                     highest_appended=highest_appended,
-                    album_by_index=album_by_index,
-                    track_infos=track_infos,
-                    ipc=ipc,
-                    tmp_root=tmp_root,
-                    library=library_path,
-                    display_root=display_root,
-                    normalize=args.normalize,
+                    **queue_common,
                 )
                 if not appended:
                     break
             else:
                 _, next_to_prepare, highest_appended = queue_more(
-                    total_tracks=total,
                     current_pos=current_pos,
-                    album_spread_mode=album_spread_mode,
-                    planner=planner,
-                    persist_recent_albums=persist_recent_albums,
-                    cache_path=cache_path,
-                    tracks=tracks,
                     next_to_prepare=next_to_prepare,
                     highest_appended=highest_appended,
-                    album_by_index=album_by_index,
-                    track_infos=track_infos,
-                    ipc=ipc,
-                    tmp_root=tmp_root,
-                    library=library_path,
-                    display_root=display_root,
-                    normalize=args.normalize,
+                    **queue_common,
                 )
 
     if persist_recent_albums and cache_path and planner is not None:
         save_recent_albums_cache(cache_path, planner.recent_albums)
 
+    cleanup_session(tmp_root, ipc_path, is_windows, mpv_proc)
+
+
+def cleanup_session(tmp_root: Path, ipc_path: str, is_windows: bool, mpv_proc: subprocess.Popen) -> None:
     shutil.rmtree(tmp_root, ignore_errors=True)
     try:
         if is_windows:
