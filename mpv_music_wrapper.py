@@ -1156,7 +1156,7 @@ def add_replaygain_if_requested(file: Path, normalize: bool) -> Optional[str]:
         err = (proc2.stderr or "").strip()
         log_warn(f"replaygain tag write failed for {file}; RG tags not added. ffmpeg stderr: {err}")
         return None
-    return f"{gain_db:.2f} dB"
+    return f"{gain_db:.2f}dB"
 
 
 def copy_audio(src: Path, dst: Path) -> None:
@@ -1584,7 +1584,7 @@ def queue_more(
             src = tracks[state.next_to_prepare]
 
         if state.next_to_prepare == 0:
-            print("[info] preparing first track...", file=sys.stderr)
+            log_info("preparing first track...")
         info = prepare_track(state.next_to_prepare, src, tmp_root, library, display_root, normalize)
         state.track_infos[state.next_to_prepare] = info
 
@@ -1640,7 +1640,7 @@ def load_tracks_and_planner(
 ) -> Tuple[List[Path], Optional[RandomPlanner], bool, int, int]:
     planner: Optional[RandomPlanner] = None
     if args.mode == "random":
-        print("[info] scanning library...", file=sys.stderr)
+        log_info("scanning library...")
         planner = RandomPlanner.from_library(Path(args.library))
         if persist_recent_albums and cache_path:
             load_recent_albums_cache(cache_path, planner)
