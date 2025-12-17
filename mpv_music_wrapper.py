@@ -1604,13 +1604,13 @@ def main(argv: Sequence[str]) -> None:
                     break
                 src = tracks[next_to_prepare]
 
+            if next_to_prepare == 0:
+                print("[info] preparing first track...", file=sys.stderr)
             info = prepare_track(next_to_prepare, src, tmp_root, Path(args.library) if args.library else None, display_root, args.normalize)
             track_infos[next_to_prepare] = info
 
             mode = "replace" if highest_appended < 0 else "append-play"
             append_to_mpv(ipc, info.staged_path, mode)
-            if next_to_prepare == 0:
-                print("[info] first track ready.", file=sys.stderr)
             # Inform user that the next track is staged and ready (skip first track).
             if next_to_prepare > 0:
                 gain_display = info.rg_gain_display if info.rg_gain_display else "none"
