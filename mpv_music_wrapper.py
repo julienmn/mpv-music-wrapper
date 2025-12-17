@@ -53,7 +53,7 @@ NON_FRONT_IMAGE_KEYWORDS = [
 TINY_FRONT_AREA = 200_000
 IMAGE_PROBE_BIN = "ffprobe"
 IMAGE_EXTRACT_BIN = "ffmpeg"
-COVER_LNORM_BIN = "ffmpeg"
+LOUDNORM_BIN = "ffmpeg"
 COVER_PREFERRED_FILE = "cover.png"
 AREA_THRESHOLD_PCT = 75
 ASPECT_MIN_AREA_BUCKET1 = 3 * TINY_FRONT_AREA  # require decent size before preferring squarer in bucket 1
@@ -531,11 +531,11 @@ def choose_tmp_root() -> Path:
 
 
 def check_dependencies(normalize: bool) -> None:
-    required = ["mpv", IMAGE_PROBE_BIN, IMAGE_EXTRACT_BIN, "python", COVER_LNORM_BIN]
+    required = ["mpv", IMAGE_PROBE_BIN, IMAGE_EXTRACT_BIN, "python", LOUDNORM_BIN]
     for dep in required:
         if shutil.which(dep) is None:
             die(f"{dep} not found in PATH")
-    globals()["LOUDNORM_AVAILABLE"] = shutil.which(COVER_LNORM_BIN) is not None
+    globals()["LOUDNORM_AVAILABLE"] = shutil.which(LOUDNORM_BIN) is not None
     if normalize and not LOUDNORM_AVAILABLE:
         die("--normalize requested but ffmpeg (loudnorm) not found")
 
@@ -1017,7 +1017,7 @@ def strip_rg_tags_if_possible(file: Path) -> None:
     # Clear ReplayGain tags while preserving other metadata via ffmpeg copy.
     tmp = file.with_name(f"{file.stem}.norg{file.suffix}")
     cmd = [
-        COVER_LNORM_BIN,
+        LOUDNORM_BIN,
         "-loglevel",
         "error",
         "-nostdin",
@@ -1061,7 +1061,7 @@ def add_replaygain_if_requested(file: Path, normalize: bool) -> Optional[str]:
     # Use ffmpeg loudnorm to measure and then tag with RG-equivalent tags.
     # Pass 1: measure loudness/peak
     measure_cmd = [
-        COVER_LNORM_BIN,
+        LOUDNORM_BIN,
         "-hide_banner",
         "-nostdin",
         "-i",
@@ -1092,7 +1092,7 @@ def add_replaygain_if_requested(file: Path, normalize: bool) -> Optional[str]:
     peak_linear = 10 ** (max_true_peak / 20.0)
     tagged = file.with_name(f"{file.stem}.rg{file.suffix}")
     tag_cmd = [
-        COVER_LNORM_BIN,
+        LOUDNORM_BIN,
         "-loglevel",
         "error",
         "-nostdin",
