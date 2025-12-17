@@ -90,6 +90,26 @@ def log_error(msg: str) -> None:
     print(f"[error] {msg}", file=sys.stderr)
 
 
+def stderr_supports_color() -> bool:
+    return sys.stderr.isatty() and os.environ.get("NO_COLOR") is None
+
+
+COLOR_GREEN = "32"
+COLOR_YELLOW = "33"
+COLOR_MAGENTA = "35"
+COLOR_CYAN = "36"
+
+
+def colorize(text: str, color_code: str) -> str:
+    if not stderr_supports_color():
+        return text
+    return f"\033[{color_code}m{text}\033[0m"
+
+
+def colored_tag(tag: str, color_code: str) -> str:
+    return colorize(f"[{tag}]", color_code)
+
+
 def die(msg: str, code: int = 1) -> None:
     log_error(msg)
     sys.exit(code)
@@ -1244,7 +1264,7 @@ def print_header(mode: str, library: Optional[Path], album_dir: Optional[Path], 
         random_desc_line = ""
         random_album_line = ""
 
-    header_lines = ["\033[35m🎵 mpv music wrapper 🎵\033[0m", "---"]
+    header_lines = [colorize("🎵 mpv music wrapper 🎵", COLOR_MAGENTA), "---"]
     header_lines.append(path_line)
     header_lines.append(mode_line)
     if mode == "random":
@@ -1268,11 +1288,11 @@ def print_header(mode: str, library: Optional[Path], album_dir: Optional[Path], 
             max_len = vlen
     inner_width = max_len
 
-    print("\033[36m╔" + "═" * (inner_width + 2) + "╗\033[0m", file=sys.stderr)
+    print(colorize("╔" + "═" * (inner_width + 2) + "╗", COLOR_CYAN), file=sys.stderr)
     is_first = True
     for line in header_lines:
         if line == "---":
-            print("\033[36m╟" + "─" * (inner_width + 2) + "╢\033[0m", file=sys.stderr)
+            print(colorize("╟" + "─" * (inner_width + 2) + "╢", COLOR_CYAN), file=sys.stderr)
             continue
         vlen = visible_len(line)
         pad_len = max(inner_width - vlen, 0)
@@ -1281,8 +1301,10 @@ def print_header(mode: str, library: Optional[Path], album_dir: Optional[Path], 
             left_pad = pad_len // 2
             pad_len -= left_pad
             is_first = False
-        print(f"\033[36m║\033[0m {' ' * left_pad}{line}{' ' * pad_len} \033[36m║\033[0m", file=sys.stderr)
-    print("\033[36m╚" + "═" * (inner_width + 2) + "╝\033[0m", file=sys.stderr)
+        left_border = colorize("║", COLOR_CYAN)
+        right_border = colorize("║", COLOR_CYAN)
+        print(f"{left_border} {' ' * left_pad}{line}{' ' * pad_len} {right_border}", file=sys.stderr)
+    print(colorize("╚" + "═" * (inner_width + 2) + "╝", COLOR_CYAN), file=sys.stderr)
 
 
 # -----------------
@@ -1491,8 +1513,8 @@ def print_rg_for_pos(pos: int, tracks: List[Path], track_infos: Dict[int, TrackI
     src_path = tracks[pos] if pos < len(tracks) else Path("unknown")
     cover_detail = track_infos.get(pos).cover_detail if pos in track_infos else "[ ] no images found"
 
-    print(f"\n\033[33m[RG]\033[0m {msg} | src: {display_path(src_path, display_root)}", file=sys.stderr)
-    print(f"\033[36m[ART]\033[0m candidates:\n{cover_detail}", file=sys.stderr)
+    print(f"\n{colored_tag('RG', COLOR_YELLOW)} {msg} | src: {display_path(src_path, display_root)}", file=sys.stderr)
+    print(f"{colored_tag('ART', COLOR_CYAN)} candidates:\n{cover_detail}", file=sys.stderr)
     print("----------------------------------------", file=sys.stderr)
 
 
@@ -1558,7 +1580,7 @@ def queue_more(
             gain_display = info.rg_gain_display if info.rg_gain_display else "none"
             detail_stripped = info.cover_detail.strip()
             images_count = 0 if (not detail_stripped or detail_stripped == "[ ] no images found") else detail_stripped.count("\n") + 1
-            print(f"\n\033[32m[Next]\033[0m ready: track={next_to_prepare + 1} RG={gain_display} images={images_count}", file=sys.stderr)
+            print(f"\n{colored_tag('Next', COLOR_GREEN)} ready: track={next_to_prepare + 1} RG={gain_display} images={images_count}", file=sys.stderr)
         highest_appended = next_to_prepare
         next_to_prepare += 1
         appended = True
