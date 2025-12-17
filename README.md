@@ -16,7 +16,6 @@ CLI music player (mpv wrapper) that plays directly from your library with option
 - python 3
 - mpv
 - ffprobe and ffmpeg
-- ffmpeg (required when using `--normalize`)
 
 ## Usage
 Run from the repository root (or place the script on PATH):
