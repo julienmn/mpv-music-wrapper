@@ -15,7 +15,7 @@ CLI music player (mpv wrapper) that plays directly from your library with option
 ## Requirements
 - python 3
 - mpv
-- ffprobe and ffmpeg
+- ffmpeg (provides ffprobe)
 
 ## Usage
 Run from the repository root (or place the script on PATH):
