@@ -53,6 +53,7 @@ NON_FRONT_IMAGE_KEYWORDS = [
 TINY_FRONT_AREA = 200_000
 IMAGE_PROBE_BIN = "ffprobe"
 IMAGE_EXTRACT_BIN = "ffmpeg"
+COVER_LNORM_BIN = "ffmpeg"
 COVER_PREFERRED_FILE = "cover.png"
 AREA_THRESHOLD_PCT = 75
 ASPECT_MIN_AREA_BUCKET1 = 3 * TINY_FRONT_AREA  # require decent size before preferring squarer in bucket 1
@@ -71,8 +72,7 @@ DEFAULT_SOCKET_DIR = Path("/tmp")
 WINDOWS_PIPE_PREFIX = r"\\.\\pipe\\"
 
 ART_DEBUG = os.environ.get("ART_DEBUG", "0") == "1"
-METAFLAC_AVAILABLE = False
-WARNED_NO_METAFLAC = False
+LOUDNORM_AVAILABLE = False
 
 # --------------
 # Logging helpers
@@ -128,6 +128,7 @@ class TrackInfo:
     cover_path: Optional[Path]
     cover_meta: str
     cover_detail: str
+    rg_gain_display: str = "none"
 
 
 @dataclasses.dataclass
@@ -397,10 +398,11 @@ def usage_text() -> str:
         "Options:\n"
         "  --library <dir>              Required for --random-mode. Optional for --album to enable multi-disc\n"
         "                               parent cover search when the album is inside the library.\n"
-        "  --normalize                  Copy to RAM, strip existing RG tags, add track RG via metaflac,\n"
-        "                               and play with --replaygain=track. Without this flag we still\n"
-        "                               copy to RAM, strip RG tags when possible, and link album art,\n"
-        "                               but do NOT compute RG or pass --replaygain to mpv.\n"
+        "  --normalize                  Copy to RAM, strip existing RG tags, add track RG via ffmpeg\n"
+        "                               loudnorm, and play with --replaygain=track (with clip protection).\n"
+        "                               Without this flag we still copy to RAM, strip RG tags when\n"
+        "                               possible, and link album art, but do NOT compute RG or pass\n"
+        "                               --replaygain to mpv.\n"
         "  --mpv-additional-args <str>  Extra args for mpv (string, split like a shell).\n"
         "  --persist-recent-albums      Save/load recent album picks between runs (JSON cache, optional).\n"
         "  -h, --help                   Show this help.\n\n"
@@ -529,16 +531,13 @@ def choose_tmp_root() -> Path:
 
 
 def check_dependencies(normalize: bool) -> None:
-    required = ["mpv", IMAGE_PROBE_BIN, IMAGE_EXTRACT_BIN, "python"]
+    required = ["mpv", IMAGE_PROBE_BIN, IMAGE_EXTRACT_BIN, "python", COVER_LNORM_BIN]
     for dep in required:
         if shutil.which(dep) is None:
             die(f"{dep} not found in PATH")
-    if normalize:
-        if shutil.which("metaflac") is None:
-            die("--normalize requested but metaflac not found")
-        globals()["METAFLAC_AVAILABLE"] = True
-    else:
-        globals()["METAFLAC_AVAILABLE"] = shutil.which("metaflac") is not None
+    globals()["LOUDNORM_AVAILABLE"] = shutil.which(COVER_LNORM_BIN) is not None
+    if normalize and not LOUDNORM_AVAILABLE:
+        die("--normalize requested but ffmpeg (loudnorm) not found")
 
 
 # --------------
@@ -979,13 +978,7 @@ def strip_embedded_art(file: Path) -> None:
     if not file.exists():
         return
     ext = lower_ext(file)
-    tmp = file.with_suffix(file.suffix + ".noart")
-    if ext == "flac":
-        if METAFLAC_AVAILABLE:
-            subprocess.run(["metaflac", "--remove", "--block-type=PICTURE", str(file)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return
-        else:
-            maybe_warn_metaflac()
+    tmp = file.with_name(f"{file.stem}.noart{file.suffix}")
     cmd = [IMAGE_EXTRACT_BIN, "-loglevel", "error", "-nostdin", "-y", "-i", str(file), "-map", "0:a", "-map_metadata", "0", "-vn", "-dn", "-sn", "-c", "copy", str(tmp)]
     proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
@@ -1000,22 +993,11 @@ def strip_embedded_art(file: Path) -> None:
         except OSError:
             pass
 
-def maybe_warn_metaflac() -> None:
-    global WARNED_NO_METAFLAC
-    if METAFLAC_AVAILABLE or WARNED_NO_METAFLAC:
-        return
-    WARNED_NO_METAFLAC = True
-    log_warn("metaflac not found; FLAC RG tag stripping/scan skipped.")
-
-
 def strip_id3_if_flac(file: Path) -> None:
     if lower_ext(file) != "flac":
         return
-    if METAFLAC_AVAILABLE:
-        subprocess.run(["metaflac", "--remove", "--block-type=ID3", str(file)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    else:
-        maybe_warn_metaflac()
-    tmp = file.with_suffix(file.suffix + ".clean")
+    # Remove ID3 via ffmpeg copy
+    tmp = file.with_name(f"{file.stem}.clean{file.suffix}")
     cmd = [IMAGE_EXTRACT_BIN, "-loglevel", "error", "-nostdin", "-y", "-i", str(file), "-map", "0:a", "-map_metadata", "0", "-vn", "-dn", "-sn", "-c", "copy", str(tmp)]
     proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
@@ -1032,25 +1014,117 @@ def strip_id3_if_flac(file: Path) -> None:
 
 
 def strip_rg_tags_if_possible(file: Path) -> None:
-    if lower_ext(file) != "flac":
-        return
-    if METAFLAC_AVAILABLE:
-        subprocess.run(["metaflac", "--remove-replay-gain", str(file)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    else:
-        maybe_warn_metaflac()
+    # Clear ReplayGain tags while preserving other metadata via ffmpeg copy.
+    tmp = file.with_name(f"{file.stem}.norg{file.suffix}")
+    cmd = [
+        COVER_LNORM_BIN,
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+        "-i",
+        str(file),
+        "-map",
+        "0:a",
+        "-map_metadata",
+        "0",
+        "-vn",
+        "-dn",
+        "-sn",
+        "-c",
+        "copy",
+        "-metadata",
+        "replaygain_track_gain=",
+        "-metadata",
+        "replaygain_track_peak=",
+        "-metadata",
+        "replaygain_reference_loudness=",
+        str(tmp),
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
+        try:
+            tmp.replace(file)
+            return
+        except OSError:
+            pass
+    if tmp.exists():
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
 
 
-def add_replaygain_if_requested(file: Path, normalize: bool) -> None:
+def add_replaygain_if_requested(file: Path, normalize: bool) -> Optional[str]:
     if not normalize:
-        return
-    if lower_ext(file) != "flac":
-        return
-    if not METAFLAC_AVAILABLE:
-        maybe_warn_metaflac()
-        return
-    proc = subprocess.run(["metaflac", "--add-replay-gain", str(file)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if proc.returncode != 0:
-        log_warn(f"replaygain scan failed for {file}; RG tags not added")
+        return None
+    # Use ffmpeg loudnorm to measure and then tag with RG-equivalent tags.
+    # Pass 1: measure loudness/peak
+    measure_cmd = [
+        COVER_LNORM_BIN,
+        "-hide_banner",
+        "-nostdin",
+        "-i",
+        str(file),
+        "-af",
+        "loudnorm=I=-18:TP=-1.5:LRA=11:print_format=json",
+        "-f",
+        "null",
+        "-",
+    ]
+    proc = subprocess.run(measure_cmd, capture_output=True, text=True)
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0 or not combined:
+        log_warn(f"replaygain scan (loudnorm) failed for {file}; RG tags not added")
+        return None
+    try:
+        m = re.search(r"\{.*\}", combined, re.S)
+        if not m:
+            log_warn(f"replaygain scan parse failed for {file}: no loudnorm JSON found")
+            return None
+        data = json.loads(m.group(0))
+        measured_i = float(data.get("input_i", 0.0))
+        max_true_peak = float(data.get("input_tp", 0.0))
+    except Exception as exc:
+        log_warn(f"replaygain scan parse failed for {file}: {exc}")
+        return None
+    gain_db = -18.0 - measured_i
+    peak_linear = 10 ** (max_true_peak / 20.0)
+    tagged = file.with_name(f"{file.stem}.rg{file.suffix}")
+    tag_cmd = [
+        COVER_LNORM_BIN,
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+        "-i",
+        str(file),
+        "-map",
+        "0:a",
+        "-map_metadata",
+        "0",
+        "-vn",
+        "-dn",
+        "-sn",
+        "-c",
+        "copy",
+        "-metadata",
+        f"replaygain_track_gain={gain_db:.2f} dB",
+        "-metadata",
+        f"replaygain_track_peak={peak_linear:.6f}",
+        str(tagged),
+    ]
+    proc2 = subprocess.run(tag_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc2.returncode == 0 and tagged.exists() and tagged.stat().st_size > 0:
+        try:
+            tagged.replace(file)
+        except OSError:
+            log_warn(f"replaygain tag write failed for {file}")
+    else:
+        err = (proc2.stderr or "").strip()
+        log_warn(f"replaygain tag write failed for {file}; RG tags not added. ffmpeg stderr: {err}")
+        return None
+    return f"{gain_db:.2f} dB"
 
 
 def copy_audio(src: Path, dst: Path) -> None:
@@ -1347,7 +1421,7 @@ def prepare_track(index: int, src: Path, tmp_root: Path, library: Optional[Path]
     strip_id3_if_flac(dst_path)
     strip_embedded_art(dst_path)
     strip_rg_tags_if_possible(dst_path)
-    add_replaygain_if_requested(dst_path, normalize)
+    rg_gain_display = add_replaygain_if_requested(dst_path, normalize) or "none"
 
     album_root = album_root_for_track(src, library)
     cover, cover_meta, cover_detail = select_cover_for_track(src, dst_dir, dst_path, album_root, display_root)
@@ -1358,7 +1432,15 @@ def prepare_track(index: int, src: Path, tmp_root: Path, library: Optional[Path]
             cover = converted
         else:
             link_cover(cover, dst_dir)
-    return TrackInfo(index=index, source_path=src, staged_path=dst_path, cover_path=cover, cover_meta=cover_meta, cover_detail=cover_detail)
+    return TrackInfo(
+        index=index,
+        source_path=src,
+        staged_path=dst_path,
+        cover_path=cover,
+        cover_meta=cover_meta,
+        cover_detail=cover_detail,
+        rg_gain_display=rg_gain_display,
+    )
 
 
 # ------------------
@@ -1458,6 +1540,7 @@ def main(argv: Sequence[str]) -> None:
 
     planner: Optional[RandomPlanner] = None
     if args.mode == "random":
+        print("[info] scanning library...", file=sys.stderr)
         planner = RandomPlanner.from_library(Path(args.library))
         if persist_recent_albums and cache_path:
             load_recent_albums_cache(cache_path, planner)
@@ -1521,11 +1604,19 @@ def main(argv: Sequence[str]) -> None:
                     break
                 src = tracks[next_to_prepare]
 
+            if next_to_prepare == 0:
+                print("[info] preparing first track...", file=sys.stderr)
             info = prepare_track(next_to_prepare, src, tmp_root, Path(args.library) if args.library else None, display_root, args.normalize)
             track_infos[next_to_prepare] = info
 
             mode = "replace" if highest_appended < 0 else "append-play"
             append_to_mpv(ipc, info.staged_path, mode)
+            # Inform user that the next track is staged and ready (skip first track).
+            if next_to_prepare > 0:
+                gain_display = info.rg_gain_display if info.rg_gain_display else "none"
+                detail_stripped = info.cover_detail.strip()
+                images_count = 0 if (not detail_stripped or detail_stripped == "[ ] no images found") else detail_stripped.count("\n") + 1
+                print(f"\n\033[32m[Next]\033[0m ready: track={next_to_prepare + 1} RG={gain_display} images={images_count}", file=sys.stderr)
             highest_appended = next_to_prepare
             next_to_prepare += 1
             appended = True
