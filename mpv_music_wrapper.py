@@ -43,6 +43,7 @@ NON_FRONT_IMAGE_KEYWORDS = [
     "disc",
     "inlay",
     "inlet",
+    "insert",
     "booklet",
     "book",
     "spine",
