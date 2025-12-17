@@ -6,7 +6,7 @@ CLI music player (mpv wrapper) that plays directly from your library with option
 
 ## Features
 - Modes: random (`--random-mode=full-library --library=...`), album (`--album=DIR`), playlist (`--playlist=FILE`).
-- Optional normalization (`--normalize`): copy audio to tmpfs, strip existing ReplayGain tags, add track ReplayGain via metaflac (FLAC only), and start mpv with `--replaygain=track`. This is done on the fly—no advance library scan or maintaining a second ReplayGain’d library. Without it: still copies/strips ReplayGain tags when possible, but no ReplayGain scan and mpv uses `--replaygain=no`.
+- Optional normalization (`--normalize`): copy audio to tmpfs, strip existing ReplayGain tags, add track ReplayGain via ffmpeg loudnorm (all formats), and start mpv with `--replaygain=track`. This is done on the fly—no advance library scan or maintaining a second ReplayGain’d library. Without it: still copies/strips ReplayGain tags when possible, but no ReplayGain scan and mpv uses `--replaygain=no`.
 - RAM staging: per-track subdirs under `/dev/shm/mpv-music-<pid>-XXXXXX`; cleaned as playback advances and on exit. Library is never modified and no disk writes are done during playback.
 - Cover art: scans every image in the track folder and all subfolders, extracts embedded art to PNG, selects the best image (front-ish > album-named > everything else, then scope/size), converts to `cover.png`, strips embedded art from the temp audio copy, and exposes only `cover.png` to mpv (`--cover-art-auto=exact`). Album-name matching ignores junk tokens (pure numbers, very short tokens, audio extensions like `flac`/`mp3`).
 - IPC/GUI: mpv runs with a GUI window forced open; IPC socket at `/tmp/mpv-<pid>.sock` so you can pause/skip/query status from other terminals/scripts. Poll interval for playlist position is 5s.
@@ -16,7 +16,7 @@ CLI music player (mpv wrapper) that plays directly from your library with option
 - python 3
 - mpv
 - ffprobe and ffmpeg
-- metaflac (required when using `--normalize`; otherwise ReplayGain strip/scan is skipped for FLAC)
+- ffmpeg (required when using `--normalize`)
 
 ## Usage
 Run from the repository root (or place the script on PATH):
