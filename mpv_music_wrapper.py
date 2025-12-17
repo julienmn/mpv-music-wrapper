@@ -1536,31 +1536,36 @@ def clean_finished(upto: int, last_cleaned: int, tmp_root: Path) -> int:
     return last_cleaned
 
 
+@dataclasses.dataclass
+class QueueState:
+    next_to_prepare: int
+    highest_appended: int
+    current_pos: int
+    track_infos: Dict[int, "TrackInfo"]
+    album_by_index: Dict[int, Path]
+
+
 def queue_more(
     *,
     total_tracks: int,
-    current_pos: int,
     album_spread_mode: bool,
     planner: Optional["RandomPlanner"],
     persist_recent_albums: bool,
     cache_path: Optional[Path],
     tracks: List[Path],
-    next_to_prepare: int,
-    highest_appended: int,
-    album_by_index: Dict[int, Path],
-    track_infos: Dict[int, "TrackInfo"],
+    state: QueueState,
     ipc: "MpvIPC",
     tmp_root: Path,
     library: Optional[Path],
     display_root: Path,
     normalize: bool,
-) -> Tuple[bool, int, int]:
+) -> bool:
     appended = False
-    target = current_pos + BUFFER_AHEAD
-    while highest_appended < target:
+    target = state.current_pos + BUFFER_AHEAD
+    while state.highest_appended < target:
         if album_spread_mode:
             assert planner is not None
-            if next_to_prepare >= len(tracks):
+            if state.next_to_prepare >= len(tracks):
                 rescan_performed = planner.maybe_refresh_album_map()
                 if rescan_performed and persist_recent_albums and cache_path:
                     save_recent_albums_cache(cache_path, planner.recent_albums)
@@ -1570,31 +1575,31 @@ def queue_more(
                 track_choice = planner.choose_track_in_album(album_choice)
                 if not track_choice:
                     break
-                album_by_index[next_to_prepare] = album_choice
+                state.album_by_index[state.next_to_prepare] = album_choice
                 tracks.append(track_choice)
-            src = tracks[next_to_prepare]
+            src = tracks[state.next_to_prepare]
         else:
-            if next_to_prepare >= total_tracks:
+            if state.next_to_prepare >= total_tracks:
                 break
-            src = tracks[next_to_prepare]
+            src = tracks[state.next_to_prepare]
 
-        if next_to_prepare == 0:
+        if state.next_to_prepare == 0:
             print("[info] preparing first track...", file=sys.stderr)
-        info = prepare_track(next_to_prepare, src, tmp_root, library, display_root, normalize)
-        track_infos[next_to_prepare] = info
+        info = prepare_track(state.next_to_prepare, src, tmp_root, library, display_root, normalize)
+        state.track_infos[state.next_to_prepare] = info
 
-        mode = "replace" if highest_appended < 0 else "append-play"
+        mode = "replace" if state.highest_appended < 0 else "append-play"
         append_to_mpv(ipc, info.staged_path, mode)
         # Inform user that the next track is staged and ready (skip first track).
-        if next_to_prepare > 0:
+        if state.next_to_prepare > 0:
             gain_display = info.rg_gain_display if info.rg_gain_display else "none"
             detail_stripped = info.cover_detail.strip()
             images_count = 0 if (not detail_stripped or detail_stripped == "[ ] no images found") else detail_stripped.count("\n") + 1
-            print(f"\n{colored_tag('Next', COLOR_GREEN)} ready: track={next_to_prepare + 1} RG={gain_display} images={images_count}", file=sys.stderr)
-        highest_appended = next_to_prepare
-        next_to_prepare += 1
+            print(f"\n{colored_tag('Next', COLOR_GREEN)} ready: track={state.next_to_prepare + 1} RG={gain_display} images={images_count}", file=sys.stderr)
+        state.highest_appended = state.next_to_prepare
+        state.next_to_prepare += 1
         appended = True
-    return appended, next_to_prepare, highest_appended
+    return appended
 
 
 def resolve_display_root(args: argparse.Namespace) -> Path:
@@ -1694,12 +1699,14 @@ def main(argv: Sequence[str]) -> None:
         recent_albums_size=recent_albums_size,
     )
 
-    next_to_prepare = 0
-    highest_appended = -1
-    current_pos = -1
+    state = QueueState(
+        next_to_prepare=0,
+        highest_appended=-1,
+        current_pos=-1,
+        track_infos={},
+        album_by_index={},
+    )
     last_cleaned = -1
-    track_infos: Dict[int, TrackInfo] = {}
-    album_by_index: Dict[int, Path] = {}
     library_path = Path(args.library) if args.library else None
     queue_common = {
         "total_tracks": total,
@@ -1708,8 +1715,7 @@ def main(argv: Sequence[str]) -> None:
         "persist_recent_albums": persist_recent_albums,
         "cache_path": cache_path,
         "tracks": tracks,
-        "album_by_index": album_by_index,
-        "track_infos": track_infos,
+        "state": state,
         "ipc": ipc,
         "tmp_root": tmp_root,
         "library": library_path,
@@ -1717,12 +1723,7 @@ def main(argv: Sequence[str]) -> None:
         "normalize": args.normalize,
     }
 
-    _, next_to_prepare, highest_appended = queue_more(
-        current_pos=current_pos,
-        next_to_prepare=next_to_prepare,
-        highest_appended=highest_appended,
-        **queue_common,
-    )
+    queue_more(**queue_common)
 
     while True:
         time.sleep(POLL_INTERVAL)
@@ -1732,50 +1733,30 @@ def main(argv: Sequence[str]) -> None:
         pos = get_playlist_pos(ipc)
         if pos is None:
             if album_spread_mode:
-                appended, next_to_prepare, highest_appended = queue_more(
-                    current_pos=current_pos,
-                    next_to_prepare=next_to_prepare,
-                    highest_appended=highest_appended,
-                    **queue_common,
-                )
+                appended = queue_more(**queue_common)
                 if appended:
                     continue
                 else:
                     break
             else:
-                if next_to_prepare >= total:
+                if state.next_to_prepare >= total:
                     break
                 else:
-                    _, next_to_prepare, highest_appended = queue_more(
-                        current_pos=current_pos,
-                        next_to_prepare=next_to_prepare,
-                        highest_appended=highest_appended,
-                        **queue_common,
-                    )
+                    queue_more(**queue_common)
                     continue
 
-        if pos != current_pos:
-            if album_spread_mode and pos in album_by_index:
-                planner.recent_albums.append(album_by_index[pos])
+        if pos != state.current_pos:
+            if album_spread_mode and pos in state.album_by_index:
+                planner.recent_albums.append(state.album_by_index[pos])
             last_cleaned = clean_finished(pos, last_cleaned, tmp_root)
-            current_pos = pos
-            print_rg_for_pos(pos, tracks, track_infos, ipc, display_root)
+            state.current_pos = pos
+            print_rg_for_pos(pos, tracks, state.track_infos, ipc, display_root)
             if album_spread_mode:
-                appended, next_to_prepare, highest_appended = queue_more(
-                    current_pos=current_pos,
-                    next_to_prepare=next_to_prepare,
-                    highest_appended=highest_appended,
-                    **queue_common,
-                )
+                appended = queue_more(**queue_common)
                 if not appended:
                     break
             else:
-                _, next_to_prepare, highest_appended = queue_more(
-                    current_pos=current_pos,
-                    next_to_prepare=next_to_prepare,
-                    highest_appended=highest_appended,
-                    **queue_common,
-                )
+                queue_more(**queue_common)
 
     if persist_recent_albums and cache_path and planner is not None:
         save_recent_albums_cache(cache_path, planner.recent_albums)
