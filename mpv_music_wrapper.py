@@ -72,7 +72,6 @@ DEFAULT_SOCKET_DIR = Path("/tmp")
 WINDOWS_PIPE_PREFIX = r"\\.\\pipe\\"
 
 ART_DEBUG = os.environ.get("ART_DEBUG", "0") == "1"
-LOUDNORM_AVAILABLE = False
 
 # --------------
 # Logging helpers
@@ -551,13 +550,24 @@ def choose_tmp_root() -> Path:
 
 
 def check_dependencies(normalize: bool) -> None:
-    required = ["mpv", IMAGE_PROBE_BIN, IMAGE_EXTRACT_BIN, "python", LOUDNORM_BIN]
-    for dep in required:
-        if shutil.which(dep) is None:
-            die(f"{dep} not found in PATH")
-    globals()["LOUDNORM_AVAILABLE"] = shutil.which(LOUDNORM_BIN) is not None
-    if normalize and not LOUDNORM_AVAILABLE:
-        die("--normalize requested but ffmpeg (loudnorm) not found")
+    required: List[str] = ["mpv", IMAGE_PROBE_BIN, IMAGE_EXTRACT_BIN]
+    if normalize:
+        required.append(LOUDNORM_BIN)
+
+    missing = [dep for dep in dict.fromkeys(required) if shutil.which(dep) is None]
+    if missing:
+        die("Missing required dependencies in PATH: " + ", ".join(missing))
+
+    if normalize:
+        proc = subprocess.run(
+            [LOUDNORM_BIN, "-hide_banner", "-filters"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        combined = (proc.stdout or "") + (proc.stderr or "")
+        if proc.returncode != 0 or "loudnorm" not in combined:
+            die("--normalize requested but ffmpeg build does not provide the loudnorm filter")
 
 
 # --------------
