@@ -1231,7 +1231,7 @@ def get_current_rg_track_gain(ipc: MpvIPC) -> Optional[str]:
         return m.group(1)
     m = re.search(r'"data"\s*:\s*([-0-9.]+)', resp)
     if m:
-        return f"{m.group(1)} dB"
+        return f"{m.group(1)}dB"
     return None
 
 
