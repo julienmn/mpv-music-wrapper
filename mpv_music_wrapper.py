@@ -128,6 +128,7 @@ class TrackInfo:
     cover_path: Optional[Path]
     cover_meta: str
     cover_detail: str
+    rg_gain_display: str = "none"
 
 
 @dataclasses.dataclass
@@ -1054,9 +1055,9 @@ def strip_rg_tags_if_possible(file: Path) -> None:
             pass
 
 
-def add_replaygain_if_requested(file: Path, normalize: bool) -> None:
+def add_replaygain_if_requested(file: Path, normalize: bool) -> Optional[str]:
     if not normalize:
-        return
+        return None
     # Use ffmpeg loudnorm to measure and then tag with RG-equivalent tags.
     # Pass 1: measure loudness/peak
     measure_cmd = [
@@ -1075,18 +1076,18 @@ def add_replaygain_if_requested(file: Path, normalize: bool) -> None:
     combined = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode != 0 or not combined:
         log_warn(f"replaygain scan (loudnorm) failed for {file}; RG tags not added")
-        return
+        return None
     try:
         m = re.search(r"\{.*\}", combined, re.S)
         if not m:
             log_warn(f"replaygain scan parse failed for {file}: no loudnorm JSON found")
-            return
+            return None
         data = json.loads(m.group(0))
         measured_i = float(data.get("input_i", 0.0))
         max_true_peak = float(data.get("input_tp", 0.0))
     except Exception as exc:
         log_warn(f"replaygain scan parse failed for {file}: {exc}")
-        return
+        return None
     gain_db = -18.0 - measured_i
     peak_linear = 10 ** (max_true_peak / 20.0)
     tagged = file.with_name(f"{file.stem}.rg{file.suffix}")
@@ -1122,6 +1123,8 @@ def add_replaygain_if_requested(file: Path, normalize: bool) -> None:
     else:
         err = (proc2.stderr or "").strip()
         log_warn(f"replaygain tag write failed for {file}; RG tags not added. ffmpeg stderr: {err}")
+        return None
+    return f"{gain_db:.2f} dB"
 
 
 def copy_audio(src: Path, dst: Path) -> None:
@@ -1418,7 +1421,7 @@ def prepare_track(index: int, src: Path, tmp_root: Path, library: Optional[Path]
     strip_id3_if_flac(dst_path)
     strip_embedded_art(dst_path)
     strip_rg_tags_if_possible(dst_path)
-    add_replaygain_if_requested(dst_path, normalize)
+    rg_gain_display = add_replaygain_if_requested(dst_path, normalize) or "none"
 
     album_root = album_root_for_track(src, library)
     cover, cover_meta, cover_detail = select_cover_for_track(src, dst_dir, dst_path, album_root, display_root)
@@ -1429,7 +1432,15 @@ def prepare_track(index: int, src: Path, tmp_root: Path, library: Optional[Path]
             cover = converted
         else:
             link_cover(cover, dst_dir)
-    return TrackInfo(index=index, source_path=src, staged_path=dst_path, cover_path=cover, cover_meta=cover_meta, cover_detail=cover_detail)
+    return TrackInfo(
+        index=index,
+        source_path=src,
+        staged_path=dst_path,
+        cover_path=cover,
+        cover_meta=cover_meta,
+        cover_detail=cover_detail,
+        rg_gain_display=rg_gain_display,
+    )
 
 
 # ------------------
@@ -1529,6 +1540,7 @@ def main(argv: Sequence[str]) -> None:
 
     planner: Optional[RandomPlanner] = None
     if args.mode == "random":
+        print("[info] scanning library...", file=sys.stderr)
         planner = RandomPlanner.from_library(Path(args.library))
         if persist_recent_albums and cache_path:
             load_recent_albums_cache(cache_path, planner)
@@ -1597,13 +1609,14 @@ def main(argv: Sequence[str]) -> None:
 
             mode = "replace" if highest_appended < 0 else "append-play"
             append_to_mpv(ipc, info.staged_path, mode)
-            # Inform user that the next track is staged and ready.
-            gain_display = "none"
-            rg_match = re.search(r"ReplayGain\\[track\\]: ([^|]+)", info.cover_detail)
-            if rg_match:
-                gain_display = rg_match.group(1).strip()
-            images_count = info.cover_detail.count("\\n") + (1 if info.cover_detail.strip() else 0)
-            print(f"\\033[32m[Next]\\033[0m ready: track={next_to_prepare + 1} RG={gain_display} images={images_count}", file=sys.stderr)
+            if next_to_prepare == 0:
+                print("[info] first track ready.", file=sys.stderr)
+            # Inform user that the next track is staged and ready (skip first track).
+            if next_to_prepare > 0:
+                gain_display = info.rg_gain_display if info.rg_gain_display else "none"
+                detail_stripped = info.cover_detail.strip()
+                images_count = 0 if (not detail_stripped or detail_stripped == "[ ] no images found") else detail_stripped.count("\n") + 1
+                print(f"\n\033[32m[Next]\033[0m ready: track={next_to_prepare + 1} RG={gain_display} images={images_count}", file=sys.stderr)
             highest_appended = next_to_prepare
             next_to_prepare += 1
             appended = True
