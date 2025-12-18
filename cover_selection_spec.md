@@ -20,7 +20,7 @@
 
 ## Definitions
 
-- Squarish: aspect ratio between 0.9 and 1.1 (inclusive).
+- Squarish: aspect ratio within a small percentage of square (configurable via constant; default ~12.5%).
 - Portraitish: height > width.
 - Album-name overlap ratio: (matching filename tokens ÷ album-name tokens),
   capped at 1.0.
