@@ -45,6 +45,7 @@
 
 ## Tiny handling
 
-If Bucket 1 has only tiny images and Bucket 2 has any non-tiny images,
-pick the best non-tiny image in Bucket 2; otherwise pick the best in
-Bucket 1.
+- If Bucket 1 has only tiny images:
+  - If Bucket 2 has any non-tiny images, pick the best non-tiny image in
+    Bucket 2.
+  - Otherwise pick the best in Bucket 1.
