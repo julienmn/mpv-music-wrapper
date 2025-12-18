@@ -51,7 +51,7 @@ NON_FRONT_IMAGE_KEYWORDS = [
     "inside",
     "tracklisting",
 ]
-TINY_FRONT_AREA = 200_000
+TINY_FRONT_AREA = 90_000
 IMAGE_PROBE_BIN = "ffprobe"
 IMAGE_EXTRACT_BIN = "ffmpeg"
 LOUDNORM_BIN = "ffmpeg"
