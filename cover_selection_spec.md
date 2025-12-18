@@ -42,7 +42,6 @@
 2. If Bucket 1 is empty:
    - Choose from Bucket 2 using the same scope ordering with existing
      area/name-token tie-breakers.
-3. Special case for tiny images:
-   - If Bucket 1 has only tiny images and Bucket 2 has any non-tiny images,
-     pick the best non-tiny image in Bucket 2; otherwise pick the best in
-     Bucket 1.
+3. If Bucket 1 has only tiny images and Bucket 2 has any non-tiny images,
+   pick the best non-tiny image in Bucket 2; otherwise pick the best in
+   Bucket 1.
