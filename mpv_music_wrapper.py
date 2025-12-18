@@ -36,7 +36,8 @@ AUDIO_EXTS = ["flac", "mp3", "ogg", "opus", "m4a", "alac", "wav", "aiff", "wv"]
 PLAYLIST_EXTS = ["m3u", "m3u8", "pls", "cue"]
 IMAGE_EXTS = ["jpg", "jpeg", "png", "webp", "gif", "bmp", "tiff", "tif", "svg"]
 PREFERRED_IMAGE_KEYWORDS = ["cover", "front", "folder"]
-SQUARISH_PCT = 12.5
+SQUARISH_PCT = 13.0
+ALBUM_OVERLAP_PCT = 50.0
 NON_FRONT_IMAGE_KEYWORDS = [
     "back",
     "tray",
@@ -785,7 +786,7 @@ def analyze_candidates(
         pref_kw_count, kw_rank = keyword_rank(base_tokens)
         non_front = has_blocking_non_front(base_tokens, album_tokens)
         overlap = album_overlap_ratio(base_tokens, album_tokens)
-        front_ok = pref_kw_count > 0 or overlap >= 0.75
+        front_ok = pref_kw_count > 0 or (overlap * 100.0) >= ALBUM_OVERLAP_PCT
         shape_ok = is_squarish(w, h) or is_portraitish(w, h)
         bucket = 1 if shape_ok and not non_front and front_ok else 2
 
