@@ -137,6 +137,7 @@ class CoverCandidate:
     name: str
     album_tokens: List[str]
     rel_display: str
+    overlap_ratio: float = 0.0
     is_embedded: bool = False
 
 
@@ -358,6 +359,13 @@ def clean_album_tokens(name: str) -> List[str]:
 def token_overlap_score(base: List[str], target: List[str]) -> int:
     target_set = set(target)
     return sum(1 for t in base if t and t in target_set)
+
+
+def album_overlap_ratio(base_tokens: List[str], album_tokens: List[str]) -> float:
+    if not album_tokens:
+        return 0.0
+    matches = token_overlap_score(base_tokens, album_tokens)
+    return min(1.0, matches / len(album_tokens))
 
 
 def extract_trailing_int(name: str) -> Optional[int]:
@@ -661,7 +669,83 @@ def gather_image_candidates(dir_path: Path, album_root: Optional[Path], is_multi
     return out, embedded
 
 
-def analyze_candidates(
+# -------------------------
+# Cover selection helpers (new impl scaffolding)
+# -------------------------
+
+def is_squarish(width: int, height: int) -> bool:
+    if width <= 0 or height <= 0:
+        return False
+    ratio = width / height
+    return 0.9 <= ratio <= 1.1
+
+
+def has_blocking_non_front(tokens: List[str], album_tokens: List[str]) -> bool:
+    album_set = set(album_tokens)
+    return any(t in NON_FRONT_IMAGE_KEYWORDS and t not in album_set for t in tokens)
+
+
+def keyword_rank(tokens: List[str]) -> Tuple[int, int]:
+    count = 0
+    rank = len(PREFERRED_IMAGE_KEYWORDS) + 1
+    for idx, kw in enumerate(PREFERRED_IMAGE_KEYWORDS):
+        if kw in tokens:
+            count += 1
+            rank = min(rank, idx)
+    return count, rank
+
+
+def looks_like_disc_folder(name: str) -> bool:
+    lowered = name.lower()
+    return bool(re.match(r"(disc|cd|disk)[ _-]*\\d+", lowered))
+
+
+def classify_scope(
+    candidate: Path,
+    embedded_path: Optional[Path],
+    track: Path,
+    dir_path: Path,
+    album_root: Optional[Path],
+    is_multi: bool,
+) -> Tuple[str, int, str]:
+    if embedded_path and str(candidate) == str(embedded_path):
+        return "embedded", 0, "embedded"
+
+    # No library root known: treat the track dir as album root.
+    if not album_root:
+        if str(candidate).startswith(str(dir_path)):
+            return "track-folder", 1, "external"
+        return "album-root", 2, "external"
+
+    if not is_multi:
+        if str(candidate).startswith(str(album_root)):
+            return "track-folder", 1, "external"
+        return "album-root", 2, "external"
+
+    try:
+        rel_track = dir_path.relative_to(album_root)
+        track_disc = rel_track.parts[0] if rel_track.parts else None
+    except ValueError:
+        track_disc = None
+
+    try:
+        rel = candidate.relative_to(album_root)
+    except ValueError:
+        return "album-root", 2, "external"
+
+    parts = rel.parts
+    if parts:
+        first = parts[0]
+        if track_disc and first == track_disc:
+            return "track-folder", 1, "external"
+        if looks_like_disc_folder(first):
+            return "other-disc", 3, "external"
+        return "album-root", 2, "external"
+
+    return "album-root", 2, "external"
+
+
+def old_analyze_candidates(
     candidates_paths: List[Path],
     embedded_path: Optional[Path],
     track: Path,
@@ -772,24 +856,86 @@ def analyze_candidates(
     return candidates_meta, detail_lines
 
 
-def aspect_penalty(c: CoverCandidate) -> float:
-    if c.width <= 0 or c.height <= 0:
-        return float("inf")
-    return abs(math.log(c.width / c.height))
+def analyze_candidates(
+    candidates_paths: List[Path],
+    embedded_path: Optional[Path],
+    track: Path,
+    album_root: Optional[Path],
+    dir_path: Path,
+    base_root: Path,
+    display_root: Path,
+) -> Tuple[List[CoverCandidate], List[str]]:
+    if album_root and album_root == dir_path.parent:
+        album_token = dir_path.name
+    else:
+        album_token = album_root.name if album_root else dir_path.name
+    album_tokens = clean_album_tokens(album_token)
 
+    candidates_meta: List[CoverCandidate] = []
+    detail_lines: List[str] = []
 
-def aspect_can_override(c1: CoverCandidate, c2: CoverCandidate) -> bool:
-    floor = ASPECT_MIN_AREA_BUCKET1 if c1.bucket == 1 else ASPECT_MIN_AREA_OTHER
-    if c1.area < floor or c2.area < floor:
-        return False
-    area_ratio = min(c1.area, c2.area) / max(c1.area, c2.area)
-    if area_ratio < ASPECT_AREA_RATIO_MIN:
-        return False
-    if c1.pref_kw_count != c2.pref_kw_count:
-        return False
-    if c1.has_non_front != c2.has_non_front:
-        return False
-    return True
+    for f in candidates_paths:
+        w, h, area = image_dims_area(f)
+        try:
+            size = f.stat().st_size
+        except OSError:
+            size = 0
+
+        lower = f.name.lower()
+        base_noext = lower.rsplit(".", 1)[0]
+        base_tokens = normalize_name_tokens(base_noext)
+
+        pref_kw_count, kw_rank = keyword_rank(base_tokens)
+        non_front = has_blocking_non_front(base_tokens, album_tokens)
+        overlap = album_overlap_ratio(base_tokens, album_tokens)
+        front_ok = pref_kw_count > 0 or overlap >= 0.75
+        bucket = 1 if is_squarish(w, h) and not non_front and front_ok else 2
+
+        is_multi = False
+        if album_root and dir_path != album_root and str(dir_path).startswith(str(album_root)):
+            is_multi = True
+
+        scope, scope_rank, src_type = classify_scope(f, embedded_path, track, dir_path, album_root, is_multi)
+
+        disp_path = display_path(f, display_root)
+        if src_type == "embedded":
+            rel_path = "EMBEDDED"
+        elif base_root and str(f).startswith(str(base_root)):
+            rel_path = str(f.relative_to(base_root))
+        else:
+            rel_path = disp_path
+
+        area_mp = area / 1_000_000
+        size_mb = size / 1_000_000
+        detail_lines.append(
+            f"path={rel_path} res={w}x{h} area={area_mp:.1f}MP size={size_mb:.1f}MB "
+            f"bucket={bucket} scope={scope} kw={pref_kw_count} overlap={overlap:.2f}"
+        )
+
+        candidates_meta.append(
+            CoverCandidate(
+                path=f,
+                width=w,
+                height=h,
+                area=area,
+                size_bytes=size,
+                pref_kw_count=pref_kw_count,
+                name_token_score=token_overlap_score(base_tokens, album_tokens),
+                has_non_front=non_front,
+                bucket=bucket,
+                kw_rank=kw_rank,
+                scope_rank=scope_rank,
+                scope=scope,
+                src_type=src_type,
+                name=f.name,
+                album_tokens=album_tokens,
+                rel_display=rel_path,
+                overlap_ratio=overlap,
+                is_embedded=src_type == "embedded",
+            )
+        )
+
+    return candidates_meta, detail_lines
 
 
 def select_best_cover(
@@ -799,103 +945,84 @@ def select_best_cover(
     display_root: Path,
     base_root: Optional[Path],
 ) -> Tuple[Optional[CoverCandidate], str, str]:
+    if not candidates:
+        return None, "", "[ ] no images found"
+
+    bucket1 = [c for c in candidates if c.bucket == 1]
+    bucket2 = [c for c in candidates if c.bucket != 1]
+
+    def trailing_key(name: str) -> float:
+        num = extract_trailing_int(name)
+        return num if num is not None else float("inf")
+
+    def choose_bucket1(lst: List[CoverCandidate]) -> Optional[CoverCandidate]:
+        if not lst:
+            return None
+        return sorted(
+            lst,
+            key=lambda c: (
+                -c.area,
+                c.scope_rank,
+                c.kw_rank,
+                trailing_key(c.name),
+                c.name,
+            ),
+        )[0]
+
+    def choose_bucket2(lst: List[CoverCandidate]) -> Optional[CoverCandidate]:
+        if not lst:
+            return None
+        squarish = [c for c in lst if is_squarish(c.width, c.height)]
+        if squarish:
+            # If areas are within the threshold, ignore area and fall back to other tie-breaks.
+            max_area = max(c.area for c in squarish)
+            min_area = min(c.area for c in squarish)
+            close_enough = max_area * AREA_THRESHOLD_PCT // 100 <= min_area * 100 // 100
+            if close_enough:
+                return sorted(
+                    squarish,
+                    key=lambda c: (
+                        c.scope_rank,
+                        -c.name_token_score,
+                        c.kw_rank,
+                        trailing_key(c.name),
+                        c.name,
+                    ),
+                )[0]
+            return sorted(
+                squarish,
+                key=lambda c: (
+                    c.scope_rank,
+                    -c.area,
+                    -c.name_token_score,
+                    c.kw_rank,
+                    trailing_key(c.name),
+                    c.name,
+                ),
+            )[0]
+        return sorted(
+            lst,
+            key=lambda c: (
+                c.scope_rank,
+                -c.area,
+                -c.name_token_score,
+                c.kw_rank,
+                trailing_key(c.name),
+                c.name,
+            ),
+        )[0]
+
     best: Optional[CoverCandidate] = None
 
-    for cand in candidates:
-        if best is None:
-            best = cand
-            continue
-
-        pick = False
-        allow_worse_scope = False
-        if cand.scope_rank > best.scope_rank:
-            if best.area > 0:
-                if best.area * 100 < cand.area * AREA_THRESHOLD_PCT:
-                    allow_worse_scope = True
-            else:
-                allow_worse_scope = True
-
-        if cand.bucket < best.bucket:
-            pick = True
-        elif cand.bucket == best.bucket == 1:
-            if cand.pref_kw_count > best.pref_kw_count:
-                # Allow high-res album-named art (no keywords) to beat a smaller keyworded image.
-                if best.pref_kw_count == 0 and best.name_token_score > 0 and not best.has_non_front:
-                    if cand.area * 100 < best.area * AREA_THRESHOLD_PCT:
-                        pick = False
-                    else:
-                        pick = True
-                else:
-                    pick = True
-            elif cand.pref_kw_count == best.pref_kw_count:
-                if cand.pref_kw_count == 0 and not cand.has_non_front and cand.name_token_score > best.name_token_score and cand.area * 100 >= best.area * AREA_THRESHOLD_PCT:
-                    pick = True
-                elif cand.pref_kw_count == 0 and not cand.has_non_front and cand.name_token_score == best.name_token_score and cand.area * 100 >= best.area * AREA_THRESHOLD_PCT and cand.scope_rank <= best.scope_rank:
-                    pick = True
-                elif cand.pref_kw_count > 0 and best.pref_kw_count > 0:
-                    if not cand.has_non_front and best.has_non_front and cand.area >= TINY_FRONT_AREA:
-                        pick = True
-                    elif cand.has_non_front and not best.has_non_front and best.area < TINY_FRONT_AREA and cand.area * 100 >= best.area * (100 + (100 - AREA_THRESHOLD_PCT)):
-                        pick = True
-                    elif cand.scope_rank < best.scope_rank and cand.area * 100 >= best.area * AREA_THRESHOLD_PCT:
-                        pick = True
-                    elif cand.scope_rank == best.scope_rank and cand.area > best.area:
-                        pick = True
-                    elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.kw_rank < best.kw_rank:
-                        pick = True
-                elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.kw_rank == best.kw_rank and cand.size_bytes > best.size_bytes:
-                    pick = True
-                elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.kw_rank == best.kw_rank and cand.size_bytes == best.size_bytes:
-                    cand_num = extract_trailing_int(cand.name) or float("inf")
-                    best_num = extract_trailing_int(best.name) or float("inf")
-                    if cand_num != best_num:
-                        pick = cand_num < best_num
-                    else:
-                        pick = cand.name < best.name
-                elif cand.scope_rank > best.scope_rank and allow_worse_scope and cand.area > best.area:
-                    pick = True
-                elif cand.pref_kw_count == 0 and not cand.has_non_front and best.pref_kw_count > 0 and cand.name_token_score > 0 and cand.area * 100 >= best.area * AREA_THRESHOLD_PCT:
-                    pick = True
-        elif cand.bucket == best.bucket == 2:
-            if cand.name_token_score > best.name_token_score:
-                pick = True
-            elif cand.name_token_score == best.name_token_score:
-                within = best.area == 0 or cand.area * 100 >= best.area * AREA_THRESHOLD_PCT
-                if cand.scope_rank < best.scope_rank and within:
-                    pick = True
-                elif cand.scope_rank == best.scope_rank and cand.area > best.area:
-                    pick = True
-                elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.size_bytes > best.size_bytes:
-                    pick = True
-                elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.size_bytes == best.size_bytes and cand.name < best.name:
-                    pick = True
-                elif cand.scope_rank > best.scope_rank and allow_worse_scope and cand.area > best.area:
-                    pick = True
-        elif cand.bucket == best.bucket == 3:
-            if best.area >= ASPECT_MIN_AREA_OTHER and cand.area >= ASPECT_MIN_AREA_OTHER and aspect_penalty(best) <= aspect_penalty(cand):
-                # Keep squarer art even if smaller when both are reasonably sized.
-                continue
-            if cand.scope_rank < best.scope_rank:
-                pick = True
-            elif cand.scope_rank == best.scope_rank and cand.area > best.area:
-                if not (aspect_can_override(best, cand) and aspect_penalty(best) <= aspect_penalty(cand)):
-                    pick = True
-            elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.kw_rank < best.kw_rank:
-                pick = True
-            elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.kw_rank == best.kw_rank and cand.size_bytes > best.size_bytes:
-                pick = True
-            elif cand.scope_rank == best.scope_rank and cand.area == best.area and cand.kw_rank == best.kw_rank and cand.size_bytes == best.size_bytes and cand.name < best.name:
-                pick = True
-            elif cand.scope_rank > best.scope_rank and allow_worse_scope and cand.area > best.area:
-                pick = True
-
-        if not pick and cand.bucket == best.bucket and cand.scope_rank == best.scope_rank:
-            if aspect_can_override(cand, best):
-                if aspect_penalty(cand) <= aspect_penalty(best):
-                    pick = True
-
-        if pick:
-            best = cand
+    if bucket1:
+        all_tiny = all(c.area < TINY_FRONT_AREA for c in bucket1)
+        non_tiny_bucket2 = [c for c in bucket2 if c.area >= TINY_FRONT_AREA]
+        if all_tiny and non_tiny_bucket2:
+            best = choose_bucket2(non_tiny_bucket2)
+        else:
+            best = choose_bucket1(bucket1)
+    else:
+        best = choose_bucket2(bucket2)
 
     cover_meta = ""
     cover_detail = "[ ] no images found"
@@ -904,7 +1031,7 @@ def select_best_cover(
         cover_meta = f"{best.src_type}|{best.width}|{best.height}|{best.area}|{best.pref_kw_count + best.name_token_score}|{best.size_bytes}"
         formatted: List[str] = []
         for line in detail_lines:
-            if (best.src_type == "embedded" and "(embedded" in line) or line.startswith(f"path={best.rel_display}"):
+            if (best.is_embedded and "EMBEDDED" in line) or line.startswith(f"path={best.rel_display}"):
                 formatted.append(f"[*] {line}")
             else:
                 formatted.append(f"[ ] {line}")

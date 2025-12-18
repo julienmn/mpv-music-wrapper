@@ -3,10 +3,11 @@
 Dump cover candidate metadata for a given track path.
 
 Usage:
-  python tests/tools/dump_cover_candidates.py /path/to/track.flac
+  python tests/tools/dump_cover_candidates.py [--library /path/to/library] /path/to/track.flac
 
-Outputs JSON lines with the fields needed to reproduce cover selection in tests.
-Requires ffprobe/ffmpeg to be available (for metadata and embedded extraction).
+Outputs JSON lines with the fields needed to reproduce cover selection in tests,
+using the current cover-analysis logic. Requires ffprobe/ffmpeg to be available
+for metadata and embedded extraction.
 """
 
 from __future__ import annotations
@@ -19,16 +20,22 @@ import mpv_music_wrapper as mw
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        print("Usage: python tests/tools/dump_cover_candidates.py /path/to/track.flac", file=sys.stderr)
+    args = sys.argv[1:]
+    library = None
+    if len(args) >= 2 and args[0] == "--library":
+        library = Path(args[1]).expanduser().resolve()
+        args = args[2:]
+
+    if len(args) != 1:
+        print("Usage: python tests/tools/dump_cover_candidates.py [--library /path/to/library] /path/to/track.flac", file=sys.stderr)
         return 1
 
-    track = Path(sys.argv[1]).resolve()
+    track = Path(args[0]).resolve()
     if not track.is_file():
         print(f"Track not found: {track}", file=sys.stderr)
         return 1
 
-    album_root = track.parent.parent if track.parent.name.lower().startswith("cd") else track.parent
+    album_root = mw.album_root_for_track(track, library) or track.parent
     dir_path = track.parent
     tmp_dir = Path(mw.choose_tmp_root())  # temp dir for embedded extraction
 
@@ -52,19 +59,26 @@ def main() -> int:
     print(f"[info] candidates={len(candidates)}")
 
     for c in candidates:
-        print(json.dumps({
-            "name": c.name,
-            "path": str(c.path),
-            "bucket": c.bucket,
-            "pref_kw_count": c.pref_kw_count,
-            "name_token_score": c.name_token_score,
-            "kw_rank": c.kw_rank,
-            "scope": c.scope,
-            "scope_rank": c.scope_rank,
-            "area": c.area,
-            "size_bytes": c.size_bytes,
-            "is_embedded": c.is_embedded,
-        }))
+        print(
+            json.dumps(
+                {
+                    "name": c.name,
+                    "path": str(c.path),
+                    "bucket": c.bucket,
+                    "pref_kw_count": c.pref_kw_count,
+                    "name_token_score": c.name_token_score,
+                    "kw_rank": c.kw_rank,
+                    "scope": c.scope,
+                    "scope_rank": c.scope_rank,
+                    "area": c.area,
+                    "width": c.width,
+                    "height": c.height,
+                    "size_bytes": c.size_bytes,
+                    "overlap_ratio": getattr(c, "overlap_ratio", 0.0),
+                    "is_embedded": c.is_embedded,
+                }
+            )
+        )
 
     return 0
 
