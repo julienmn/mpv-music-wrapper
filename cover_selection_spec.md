@@ -20,10 +20,10 @@
 
 ## Definitions
 
-- Squarish: aspect ratio within a small percentage of square (configurable via constant; default ~12.5%).
+- Squarish: aspect ratio within a small percentage of square (configurable via constant; default ~13%).
 - Portraitish: height > width.
 - Album-name overlap ratio: (matching filename tokens ÷ album-name tokens),
-  capped at 1.0.
+  capped at 1.0. Used with a percentage threshold (configurable; default ~50%).
 
 ## Bucket assignment
 
@@ -32,7 +32,7 @@
    - No non-front tokens, except if that token is also in album-name tokens.
    - And either:
      - Has a front keyword, or
-     - Album-name overlap ratio >= 0.75.
+     - Album-name overlap ratio meets the configured percentage threshold (default ~50%).
 2. **Bucket 2**: all other candidates.
 
 ## Selection
