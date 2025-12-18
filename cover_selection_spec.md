@@ -45,8 +45,6 @@
 
 ## Tiny handling
 
-- Tiny images can be in Bucket 1.
-- Within Bucket 1: when otherwise comparable, a non-tiny image beats a tiny one.
 - If Bucket 1 contains only tiny images, compare Bucket 2:
   - If Bucket 2 has any non-tiny images, pick the best non-tiny image in Bucket 2.
   - If Bucket 2 also has only tiny images, pick the best available image overall.
