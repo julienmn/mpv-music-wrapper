@@ -37,8 +37,8 @@
 ## Selection
 
 1. If Bucket 1 is non-empty:
-   - Prefer larger resolution/area within Bucket 1.
-   - If sizes are comparable, prefer better scope (use the priority above).
+   - Prefer larger resolution/area within Bucket 1; if sizes are comparable,
+     prefer better scope (use the priority above).
    - If Bucket 1 has only tiny images and Bucket 2 has any non-tiny images,
      pick the best non-tiny image in Bucket 2; otherwise pick the best in
      Bucket 1.
