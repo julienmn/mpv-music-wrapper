@@ -36,6 +36,7 @@ AUDIO_EXTS = ["flac", "mp3", "ogg", "opus", "m4a", "alac", "wav", "aiff", "wv"]
 PLAYLIST_EXTS = ["m3u", "m3u8", "pls", "cue"]
 IMAGE_EXTS = ["jpg", "jpeg", "png", "webp", "gif", "bmp", "tiff", "tif", "svg"]
 PREFERRED_IMAGE_KEYWORDS = ["cover", "front", "folder"]
+SQUARISH_PCT = 12.5
 NON_FRONT_IMAGE_KEYWORDS = [
     "back",
     "tray",
@@ -677,7 +678,8 @@ def is_squarish(width: int, height: int) -> bool:
     if width <= 0 or height <= 0:
         return False
     ratio = width / height
-    return 0.9 <= ratio <= 1.1
+    pct = SQUARISH_PCT / 100.0
+    return (1.0 - pct) <= ratio <= (1.0 + pct)
 
 
 def is_portraitish(width: int, height: int) -> bool:
