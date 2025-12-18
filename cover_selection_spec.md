@@ -34,11 +34,6 @@
      - Album-name overlap ratio >= 0.75.
 2. **Bucket 2**: all other candidates.
 
-## Embedded art
-
-- Same rules as others: eligible for Bucket 1 if squarish and meeting the
-  album-name overlap rule; otherwise Bucket 2.
-
 ## Selection
 
 1. If Bucket 1 is non-empty:
