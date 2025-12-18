@@ -4,7 +4,7 @@
 
 - Dimensions: width, height
 - Filename tokens (normalized, no extension)
-- Front keywords: `front`, `cover`, `folder`
+- Front keywords (matched as whole tokens): `front`, `cover`, `folder`
 - Non-front keywords: `back`, `tray`, `cd`, `disc`, `inlay`, `inlet`,
   `insert`, `booklet`, `book`, `spine`, `rear`, `inside`, `tracklisting`
 - Album-name tokens
