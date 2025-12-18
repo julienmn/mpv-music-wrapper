@@ -21,13 +21,14 @@
 ## Definitions
 
 - Squarish: aspect ratio between 0.9 and 1.1 (inclusive).
+- Portraitish: height > width.
 - Album-name overlap ratio: (matching filename tokens ÷ album-name tokens),
   capped at 1.0.
 
 ## Bucket assignment
 
 1. **Bucket 1 (front)** if all are true:
-   - Squarish.
+   - Shape is squarish or portraitish.
    - No non-front tokens, except if that token is also in album-name tokens.
    - And either:
      - Has a front keyword, or
@@ -37,7 +38,7 @@
 ## Selection
 
 1. If Bucket 1 is non-empty:
-   - Prefer larger resolution/area within Bucket 1; if sizes are comparable,
+   - Prefer larger resolution/area within Bucket 1; if sizes are equal,
      prefer better scope (use the priority above).
    - If still tied, use these tie-breakers in order:
      1. Keyword rank (cover > front > folder).
@@ -47,4 +48,6 @@
      Bucket 1.
 2. If Bucket 1 is empty:
    - Choose from Bucket 2 using the same scope ordering with existing
-     area/name-token tie-breakers.
+     area/name-token tie-breakers. If any squarish images exist in Bucket 2,
+     pick among those; when their areas are within the area threshold, ignore
+     area and tie-break by scope/name tokens/keyword/trailing number.

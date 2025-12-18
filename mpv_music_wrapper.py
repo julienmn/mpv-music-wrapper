@@ -680,6 +680,12 @@ def is_squarish(width: int, height: int) -> bool:
     return 0.9 <= ratio <= 1.1
 
 
+def is_portraitish(width: int, height: int) -> bool:
+    if width <= 0 or height <= 0:
+        return False
+    return height > width
+
+
 def has_blocking_non_front(tokens: List[str], album_tokens: List[str]) -> bool:
     album_set = set(album_tokens)
     return any(t in NON_FRONT_IMAGE_KEYWORDS and t not in album_set for t in tokens)
@@ -697,7 +703,7 @@ def keyword_rank(tokens: List[str]) -> Tuple[int, int]:
 
 def looks_like_disc_folder(name: str) -> bool:
     lowered = name.lower()
-    return bool(re.match(r"(disc|cd|disk)[ _-]*\\d+", lowered))
+    return bool(re.match(r"(disc|cd|disk)[ _-]*\d+", lowered))
 
 
 def classify_scope(
@@ -745,117 +751,6 @@ def classify_scope(
     return "album-root", 2, "external"
 
 
-def old_analyze_candidates(
-    candidates_paths: List[Path],
-    embedded_path: Optional[Path],
-    track: Path,
-    album_root: Optional[Path],
-    dir_path: Path,
-    base_root: Path,
-    display_root: Path,
-) -> Tuple[List[CoverCandidate], List[str]]:
-    if album_root and album_root == dir_path.parent:
-        album_token = dir_path.name
-    else:
-        album_token = album_root.name if album_root else dir_path.name
-    album_tokens = clean_album_tokens(album_token)
-
-    candidates_meta: List[CoverCandidate] = []
-    detail_lines: List[str] = []
-
-    for f in candidates_paths:
-        w, h, area = image_dims_area(f)
-        try:
-            size = f.stat().st_size
-        except OSError:
-            size = 0
-        lower = f.name.lower()
-        base_noext = lower.rsplit(".", 1)[0]
-        base_tokens = normalize_name_tokens(base_noext)
-        pref_kw_count = 0
-        kw_rank = 999
-        name_token_score = 0
-        has_non_front = False
-        bucket = 3
-
-        idx = 0
-        for kw in PREFERRED_IMAGE_KEYWORDS:
-            if kw in lower:
-                pref_kw_count += 1
-                if kw_rank == 999:
-                    kw_rank = idx
-            idx += 1
-
-        for nf in NON_FRONT_IMAGE_KEYWORDS:
-            if nf in base_tokens:
-                has_non_front = True
-                break
-
-        if pref_kw_count == 0 and album_tokens:
-            name_token_score = token_overlap_score(base_tokens, album_tokens)
-        if pref_kw_count > 0 or (name_token_score > 0 and not has_non_front):
-            bucket = 1
-        elif name_token_score > 0:
-            bucket = 2
-        else:
-            bucket = 3
-
-        scope = "external"
-        scope_rank = 2
-        src_type = "external"
-        disp_path = display_path(f, display_root)
-        is_embedded = False
-        if embedded_path and str(f) == str(embedded_path):
-            scope = "embedded"
-            scope_rank = 0
-            src_type = "embedded"
-            disp_path = f"(embedded from {display_path(track, display_root)})"
-            is_embedded = True
-        else:
-            if album_root and str(f).startswith(str(album_root)):
-                scope = "album-root"
-                scope_rank = 1
-            if str(f).startswith(str(dir_path)):
-                scope = "disc"
-                scope_rank = 0
-
-        rel_path = disp_path
-        if src_type == "external" and base_root and str(f).startswith(str(base_root)):
-            rel_path = str(f.relative_to(base_root))
-        elif src_type == "embedded":
-            rel_path = "EMBEDDED"
-
-        area_mp = area / 1_000_000
-        size_mb = size / 1_000_000
-        detail_lines.append(
-            f"path={rel_path} res={w}x{h} area={area_mp:.1f}MP size={size_mb:.1f}MB "
-            f"kwpref={pref_kw_count} nametoks={name_token_score} bucket={bucket} score={pref_kw_count + name_token_score}"
-        )
-
-        cand = CoverCandidate(
-            path=f,
-            width=w,
-            height=h,
-            area=area,
-            size_bytes=size,
-            pref_kw_count=pref_kw_count,
-            name_token_score=name_token_score,
-            has_non_front=has_non_front,
-            bucket=bucket,
-            kw_rank=kw_rank,
-            scope_rank=scope_rank,
-            scope=scope,
-            src_type=src_type,
-            name=f.name,
-            album_tokens=album_tokens,
-            rel_display=rel_path,
-            is_embedded=is_embedded,
-        )
-        candidates_meta.append(cand)
-
-    return candidates_meta, detail_lines
-
-
 def analyze_candidates(
     candidates_paths: List[Path],
     embedded_path: Optional[Path],
@@ -889,7 +784,8 @@ def analyze_candidates(
         non_front = has_blocking_non_front(base_tokens, album_tokens)
         overlap = album_overlap_ratio(base_tokens, album_tokens)
         front_ok = pref_kw_count > 0 or overlap >= 0.75
-        bucket = 1 if is_squarish(w, h) and not non_front and front_ok else 2
+        shape_ok = is_squarish(w, h) or is_portraitish(w, h)
+        bucket = 1 if shape_ok and not non_front and front_ok else 2
 
         is_multi = False
         if album_root and dir_path != album_root and str(dir_path).startswith(str(album_root)):
@@ -977,7 +873,7 @@ def select_best_cover(
             # If areas are within the threshold, ignore area and fall back to other tie-breaks.
             max_area = max(c.area for c in squarish)
             min_area = min(c.area for c in squarish)
-            close_enough = max_area * AREA_THRESHOLD_PCT // 100 <= min_area * 100 // 100
+            close_enough = min_area * 100 >= max_area * AREA_THRESHOLD_PCT
             if close_enough:
                 return sorted(
                     squarish,
