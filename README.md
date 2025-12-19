@@ -66,8 +66,10 @@ play_album /path/to/album
 - Selection:
   - If Bucket 1 exists: largest area wins; ties go to better scope (embedded > track-folder > album-root > other-disc), then keyword rank (cover > front > folder), then trailing integer.
   - If Bucket 1 is only tiny images but Bucket 2 has non-tiny, take the best non-tiny in Bucket 2 instead.
-  - If Bucket 1 is empty: choose from Bucket 2. Prefer squarish images if any; when squarish areas are similar, ignore area and tie-break by scope → name tokens → keyword → trailing number; otherwise area still leads (scope first).
+- If Bucket 1 is empty: choose from Bucket 2. Prefer squarish images if any; when squarish areas are similar, ignore area and tie-break by scope → name tokens → keyword → trailing number; otherwise area still leads (scope first).
 - Embedded art: treated like any other candidate; if it loses, it is removed. The winner is linked as `cover.png` and embedded art is stripped from the staged audio copy so mpv only sees `cover.png`.
+
+For more detail, see [`cover_selection_spec.md`](cover_selection_spec.md).
 
 ## Random algorithm
 - Current random mode is `full-library`. Libraries with <50 albums shuffle all tracks once (uniform, no replacement).
