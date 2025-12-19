@@ -1,0 +1,53 @@
+# Cover Selection Specification
+
+## Inputs per candidate
+
+- Dimensions: width, height
+- Filename tokens (normalized, no extension)
+- Front keywords (matched as whole tokens): `front`, `cover`, `folder`
+- Non-front keywords: `back`, `tray`, `cd`, `disc`, `inlay`, `inlet`,
+  `insert`, `booklet`, `book`, `spine`, `rear`, `inside`, `tracklisting`
+- Album-name tokens
+- Scope (proximity):
+  - **Single-disc album (priority)**:
+    1. embedded
+    2. track folder (album root)
+  - **Multi-disc album (priority)**:
+    1. embedded
+    2. track folder (same disc)
+    3. album-root / other non-disc folders (e.g., scans, artwork)
+    4. other-disc folder
+
+## Definitions
+
+- Squarish: aspect ratio within a small percentage of square (configurable via constant; default ~13%).
+- Portraitish: height > width.
+- Album-name overlap ratio: (matching filename tokens ÷ album-name tokens),
+  capped at 1.0. Used with a percentage threshold (configurable; default ~50%).
+
+## Bucket assignment
+
+1. **Bucket 1 (front)** if all are true:
+   - Shape is squarish or portraitish.
+   - No non-front tokens, except if that token is also in album-name tokens.
+   - And either:
+     - Has a front keyword, or
+     - Album-name overlap ratio meets the configured percentage threshold (default ~50%).
+2. **Bucket 2**: all other candidates.
+
+## Selection
+
+1. If Bucket 1 is non-empty:
+   - Prefer larger resolution/area within Bucket 1; if sizes are equal,
+     prefer better scope (use the priority above).
+   - If still tied, use these tie-breakers in order:
+     1. Keyword rank (cover > front > folder).
+     2. Trailing integer in filename (lower wins) if present.
+   - If Bucket 1 has only tiny images and Bucket 2 has any non-tiny images,
+     pick the best non-tiny image in Bucket 2; otherwise pick the best in
+     Bucket 1.
+2. If Bucket 1 is empty:
+   - Choose from Bucket 2 using the same scope ordering with existing
+     area/name-token tie-breakers. If any squarish images exist in Bucket 2,
+     pick among those; when their areas are within the area threshold, ignore
+     area and tie-break by scope/name tokens/keyword/trailing number.
