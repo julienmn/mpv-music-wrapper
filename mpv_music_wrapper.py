@@ -1387,7 +1387,7 @@ def gather_album_tracks(album_dir: Path) -> List[Path]:
     tracks: List[Path] = []
     for root, _, files in os.walk(album_dir):
         for name in files:
-            f = Path(root) / name
+            f = (Path(root) / name).resolve()
             if is_audio(f):
                 tracks.append(f)
     tracks.sort()
